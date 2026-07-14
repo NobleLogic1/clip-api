@@ -1,112 +1,143 @@
-import os
+import secrets
 import sqlite3
-import hashlib
-import threading
-from datetime import datetime
+import os
+from datetime import datetime, timezone
 from typing import Optional, Tuple
 
-DB_PATH = os.environ.get("CLIP_DB_PATH", "clip_maintained.db")
+DB_PATH = os.getenv("DB_PATH", "/data/clip_api.db")
 
 TIER_LIMITS = {
-    "free": 100,
-    "starter": 5000,
-    "pro": 50000,
-    "enterprise": 10**18,
+    "developer":    500_000,
+    "professional": 2_500_000,
+    "enterprise":   10_000_000,
 }
 
-DB_LOCK = threading.Lock()
+def _get_db() -> sqlite3.Connection:
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
+def init_db():
+    conn = _get_db()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS customers (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            stripe_customer_id   TEXT UNIQUE NOT NULL,
+            stripe_subscription_id TEXT,
+            email                TEXT NOT NULL,
+            tier                 TEXT NOT NULL DEFAULT 'developer',
+            status               TEXT NOT NULL DEFAULT 'active',
+            created_at           TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            key         TEXT UNIQUE NOT NULL,
+            customer_id INTEGER NOT NULL,
+            created_at  TEXT NOT NULL,
+            revoked     INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (customer_id) REFERENCES customers(id)
+        );
+        CREATE TABLE IF NOT EXISTS usage (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            api_key     TEXT NOT NULL,
+            month       TEXT NOT NULL,
+            call_count  INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(api_key, month)
+        );
+    """)
+    conn.commit()
+    conn.close()
 
-class KeyManager:
-    def __init__(self, db_path: str = DB_PATH):
-        self.db_path = db_path
-        self.db = self._init_db()
+def generate_api_key() -> str:
+    return "clip_" + secrets.token_urlsafe(32)
 
-    def _init_db(self):
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                api_key TEXT PRIMARY KEY,
-                email TEXT,
-                tier TEXT,
-                stripe_customer_id TEXT,
-                stripe_subscription_id TEXT,
-                created_utc TEXT,
-                requests_today INTEGER DEFAULT 0,
-                total_requests INTEGER DEFAULT 0,
-                last_reset_date TEXT
-            )
-        """)
-        conn.commit()
-        return conn
+def create_customer(stripe_customer_id: str, email: str,
+                    tier: str, subscription_id: str) -> Tuple[int, str]:
+    conn = _get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    cursor = conn.execute(
+        """INSERT OR REPLACE INTO customers
+           (stripe_customer_id, stripe_subscription_id, email, tier, status, created_at)
+           VALUES (?, ?, ?, ?, 'active', ?)""",
+        (stripe_customer_id, subscription_id, email, tier, now)
+    )
+    customer_id = cursor.lastrowid
+    api_key = generate_api_key()
+    conn.execute(
+        "INSERT INTO api_keys (key, customer_id, created_at) VALUES (?, ?, ?)",
+        (api_key, customer_id, now)
+    )
+    conn.commit()
+    conn.close()
+    return customer_id, api_key
 
-    def _utc_today(self) -> str:
-        return datetime.utcnow().date().isoformat()
+def validate_api_key(api_key: str) -> Optional[dict]:
+    conn = _get_db()
+    row = conn.execute("""
+        SELECT ak.key, c.tier, c.status, c.email, c.stripe_customer_id
+        FROM api_keys ak
+        JOIN customers c ON ak.customer_id = c.id
+        WHERE ak.key = ? AND ak.revoked = 0 AND c.status = 'active'
+    """, (api_key,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
 
-    def create_api_key(self, email: str, tier: str = "free",
-                       stripe_cid: str = None, stripe_sid: str = None) -> str:
-        api_key = f"clip_{hashlib.md5(email.encode()).hexdigest()[:16]}"
-        now = datetime.utcnow().isoformat()
-        today = self._utc_today()
-        with DB_LOCK:
-            with self.db:
-                self.db.execute("""
-                    INSERT OR REPLACE INTO users
-                    (api_key, email, tier, stripe_customer_id,
-                     stripe_subscription_id, created_utc, requests_today,
-                     total_requests, last_reset_date)
-                    VALUES (?, ?, ?, ?, ?, ?,
-                        COALESCE((SELECT requests_today FROM users WHERE api_key=?),0),
-                        COALESCE((SELECT total_requests FROM users WHERE api_key=?),0),
-                        ?)
-                """, (api_key, email, tier, stripe_cid, stripe_sid,
-                      now, api_key, api_key, today))
-        return api_key
+def check_and_increment_usage(api_key: str, tier: str) -> Tuple[bool, int, int]:
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    limit = TIER_LIMITS.get(tier, 500_000)
+    conn = _get_db()
+    conn.execute(
+        "INSERT OR IGNORE INTO usage (api_key, month, call_count) VALUES (?, ?, 0)",
+        (api_key, month)
+    )
+    row = conn.execute(
+        "SELECT call_count FROM usage WHERE api_key = ? AND month = ?",
+        (api_key, month)
+    ).fetchone()
+    current = row["call_count"] if row else 0
+    if current >= limit:
+        conn.close()
+        return False, current, limit
+    conn.execute(
+        "UPDATE usage SET call_count = call_count + 1 WHERE api_key = ? AND month = ?",
+        (api_key, month)
+    )
+    conn.commit()
+    conn.close()
+    return True, current + 1, limit
 
-    def validate_key(self, api_key: str) -> Optional[dict]:
-        today = self._utc_today()
-        with DB_LOCK:
-            self.db.execute(
-                "UPDATE users SET requests_today=0, last_reset_date=? "
-                "WHERE api_key=? AND last_reset_date!=?",
-                (today, api_key, today)
-            )
-            cur = self.db.execute(
-                "SELECT api_key,email,tier,requests_today,total_requests "
-                "FROM users WHERE api_key=?", (api_key,)
-            )
-            row = cur.fetchone()
-        if not row:
-            return None
-        return {
-            "api_key": row[0], "email": row[1], "tier": row[2],
-            "requests_today": row[3], "total_requests": row[4],
-        }
+def update_customer_status(stripe_customer_id: str, status: str):
+    conn = _get_db()
+    conn.execute(
+        "UPDATE customers SET status = ? WHERE stripe_customer_id = ?",
+        (status, stripe_customer_id)
+    )
+    conn.commit()
+    conn.close()
 
-    def check_rate_limit(self, api_key: str) -> Tuple[bool, str]:
-        user = self.validate_key(api_key)
-        if not user:
-            return False, "Invalid API key"
-        limit = TIER_LIMITS.get(user["tier"], TIER_LIMITS["free"])
-        if user["requests_today"] >= limit:
-            return False, f"Rate limit exceeded. Upgrade to increase limits."
-        return True, "OK"
-
-    def increment_usage(self, api_key: str, n: int = 1):
-        with DB_LOCK:
-            with self.db:
-                self.db.execute(
-                    "UPDATE users SET requests_today=requests_today+?, "
-                    "total_requests=total_requests+? WHERE api_key=?",
-                    (n, n, api_key)
-                )
-
-    def remaining_requests(self, api_key: str) -> int:
-        user = self.validate_key(api_key)
-        if not user:
-            return 0
-        limit = TIER_LIMITS.get(user["tier"], 0)
-        return limit - user["requests_today"]
-
-
-key_manager = KeyManager()
+def get_usage_stats(api_key: str) -> dict:
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    conn = _get_db()
+    customer = conn.execute("""
+        SELECT c.tier, c.email, c.status
+        FROM api_keys ak JOIN customers c ON ak.customer_id = c.id
+        WHERE ak.key = ?
+    """, (api_key,)).fetchone()
+    usage = conn.execute(
+        "SELECT call_count FROM usage WHERE api_key = ? AND month = ?",
+        (api_key, month)
+    ).fetchone()
+    conn.close()
+    if not customer:
+        return {}
+    limit = TIER_LIMITS.get(customer["tier"], 500_000)
+    current = usage["call_count"] if usage else 0
+    return {
+        "tier": customer["tier"],
+        "status": customer["status"],
+        "month": month,
+        "calls_used": current,
+        "calls_limit": limit,
+        "calls_remaining": max(0, limit - current),
+    }
