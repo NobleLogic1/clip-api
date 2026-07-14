@@ -20,4 +20,4 @@ EXPOSE 7860
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
     CMD curl -f http://localhost:${PORT:-7860}/health || exit 1
 
-CMD ["python", "supervisor.py"]
+CMD ["python", "app.py"]
