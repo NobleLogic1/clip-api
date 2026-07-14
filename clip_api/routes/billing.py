@@ -1,59 +1,115 @@
-from fastapi import APIRouter, HTTPException, Request
+import os
+from fastapi import APIRouter, HTTPException, Request, Header
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from typing import Optional
+from services.stripe_service import (
+    create_checkout_session, create_billing_portal_session, construct_webhook_event
+)
+from services.key_manager import (
+    create_customer, update_customer_status, validate_api_key,
+    get_usage_stats, _get_db
+)
 
-from ..services.stripe_service import stripe_service
-from ..services.key_manager import key_manager
+router = APIRouter(prefix="/billing", tags=["billing"])
 
-router = APIRouter()
+BASE_URL = os.getenv("BASE_URL", "https://web-production-58f81.up.railway.app")
+WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
+VALID_TIERS = ("developer", "professional", "enterprise")
 
 class CheckoutRequest(BaseModel):
-    price_id: str
-    success_url: str
-    cancel_url: str
+    tier: str
+    email: Optional[str] = None
 
+class PortalRequest(BaseModel):
+    api_key: str
 
-class KeyRequest(BaseModel):
-    email: str
+@router.post("/create-checkout-session")
+async def create_checkout(body: CheckoutRequest):
+    if body.tier not in VALID_TIERS:
+        raise HTTPException(400, f"Invalid tier. Choose: {', '.join(VALID_TIERS)}")
+    try:
+        session = create_checkout_session(
+            tier=body.tier,
+            success_url=f"{BASE_URL}/billing/success",
+            cancel_url=f"{BASE_URL}/billing/cancel",
+            customer_email=body.email,
+        )
+        return {"checkout_url": session.url, "session_id": session.id}
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
+@router.post("/portal")
+async def billing_portal(body: PortalRequest):
+    conn = _get_db()
+    row = conn.execute("""
+        SELECT c.stripe_customer_id FROM api_keys ak
+        JOIN customers c ON ak.customer_id = c.id WHERE ak.key = ?
+    """, (body.api_key,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "API key not found")
+    try:
+        session = create_billing_portal_session(row["stripe_customer_id"], BASE_URL)
+        return {"portal_url": session.url}
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
-@router.post("/checkout")
-async def create_checkout(req: CheckoutRequest):
-    result, status_code = stripe_service.create_checkout(
-        req.price_id, req.success_url, req.cancel_url
-    )
-    if status_code >= 400:
-        raise HTTPException(status_code=status_code, detail=result.get("error"))
-    return result
-
+@router.get("/usage")
+async def get_usage(authorization: str = Header(...)):
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Use: Authorization: Bearer YOUR_API_KEY")
+    api_key = authorization[7:].strip()
+    if not validate_api_key(api_key):
+        raise HTTPException(401, "Invalid or inactive API key")
+    return get_usage_stats(api_key)
 
 @router.post("/webhook")
 async def stripe_webhook(request: Request):
     payload = await request.body()
-    sig_header = request.headers.get("stripe-signature", "")
-    result, status_code = stripe_service.process_webhook(payload, sig_header)
-    if status_code >= 400:
-        raise HTTPException(status_code=status_code, detail=result.get("error"))
-    return result
+    sig = request.headers.get("stripe-signature")
+    if not sig:
+        raise HTTPException(400, "Missing Stripe signature")
+    try:
+        event = construct_webhook_event(payload, sig, WEBHOOK_SECRET)
+    except Exception as e:
+        raise HTTPException(400, f"Webhook error: {e}")
 
+    t = event["type"]
+    obj = event["data"]["object"]
 
-@router.post("/key")
-async def get_or_create_key(req: KeyRequest):
-    api_key = key_manager.create_api_key(req.email, tier="free")
-    remaining = key_manager.remaining_requests(api_key)
-    user = key_manager.validate_key(api_key)
+    if t == "checkout.session.completed":
+        _, api_key = create_customer(
+            stripe_customer_id=obj.get("customer"),
+            email=obj.get("customer_details", {}).get("email", ""),
+            tier=obj.get("metadata", {}).get("tier", "developer"),
+            subscription_id=obj.get("subscription"),
+        )
+        # TODO: Email api_key to customer via SendGrid/Resend
+        print(f"[BILLING] New subscriber: {obj.get('customer_details',{}).get('email')} "
+              f"tier={obj.get('metadata',{}).get('tier')} key={api_key}")
+
+    elif t in ("customer.subscription.deleted", "customer.subscription.paused"):
+        update_customer_status(obj.get("customer"), "inactive")
+
+    elif t == "customer.subscription.updated":
+        status = obj.get("status")
+        new_status = "active" if status == "active" else "inactive"
+        update_customer_status(obj.get("customer"), new_status)
+
+    elif t == "invoice.payment_failed":
+        update_customer_status(obj.get("customer"), "inactive")
+
+    return JSONResponse({"status": "ok"})
+
+@router.get("/success")
+async def checkout_success(session_id: Optional[str] = None):
     return {
-        "api_key": api_key,
-        "email": req.email,
-        "tier": user.get("tier", "free"),
-        "remaining_today": remaining,
+        "message": "Subscription activated! Your API key has been sent to your email.",
+        "next": "Use your key in the Authorization: Bearer <key> header."
     }
 
-
-@router.get("/usage/{api_key}")
-async def get_usage(api_key: str):
-    user = key_manager.validate_key(api_key)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-    remaining = key_manager.remaining_requests(api_key)
-    return {**user, "remaining_today": remaining}
+@router.get("/cancel")
+async def checkout_cancel():
+    return {"message": "Checkout cancelled. No charge was made."}
