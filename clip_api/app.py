@@ -1,38 +1,45 @@
-from fastapi import FastAPI
+import os
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Depends
+from fastapi.middleware.cors import CORSMiddleware
 
-from .routes.encode import router as encode_router
-from .routes.similarity import router as similarity_router
-from .routes.billing import router as billing_router
-from .services.clip_model import clip_model_service
-from .services.key_manager import key_manager
-from .services.stripe_service import stripe_service
-from .utils.logging import setup_logging
+from services.clip_model import load_model
+from services.key_manager import init_db
+from utils.auth import require_api_key
+from routes import encode, similarity, billing
 
-setup_logging()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()        # create SQLite tables
+    load_model()     # warm up CLIP
+    yield
 
+app = FastAPI(
+    title="CLIP Maintained API",
+    description="Production-ready CLIP embedding API by NobleLogic",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
-def create_app() -> FastAPI:
-    app = FastAPI(
-        title="CLIP Maintained API",
-        version="1.0.0",
-        description="Modularized CLIP API with text/image encoding, similarity search, and Stripe billing.",
-    )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    clip_model_service.load_model()
+# Public routes
+app.include_router(billing.router)
 
-    app.include_router(encode_router, prefix="/encode", tags=["encode"])
-    app.include_router(similarity_router, prefix="/similarity", tags=["similarity"])
-    app.include_router(billing_router, prefix="/billing", tags=["billing"])
+# Gated routes — require active subscription
+app.include_router(encode.router,     dependencies=[Depends(require_api_key)])
+app.include_router(similarity.router, dependencies=[Depends(require_api_key)])
 
-    @app.get("/health", tags=["health"])
-    async def health():
-        return {
-            "status": "ok" if clip_model_service.is_loaded else "degraded",
-            "device": str(clip_model_service.device),
-            "model_loaded": clip_model_service.is_loaded,
-        }
-
-    return app
-
-
-app = create_app()
+@app.get("/health")
+async def health():
+    from services.clip_model import model
+    return {
+        "status": "ok",
+        "model_loaded": model is not None,
+        "device": "cpu",
+    }
