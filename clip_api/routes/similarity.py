@@ -3,8 +3,6 @@ from pydantic import BaseModel
 from typing import List
 
 from ..services.clip_model import clip_model_service
-from ..services.key_manager import key_manager
-from ..utils.exceptions import InvalidAPIKeyError, RateLimitError, ModelNotLoadedError
 
 router = APIRouter()
 
@@ -18,18 +16,11 @@ class SimilaritySearchRequest(BaseModel):
 @router.post("/search")
 async def similarity_search(req: SimilaritySearchRequest):
     if not clip_model_service.is_loaded:
-        raise ModelNotLoadedError()
-    ok, msg = key_manager.check_rate_limit(req.api_key)
-    if not ok:
-        if "Invalid" in msg:
-            raise InvalidAPIKeyError()
-        raise RateLimitError(msg)
+        raise HTTPException(status_code=503, detail="Model not loaded")
     if not req.image_urls:
         raise HTTPException(status_code=400, detail="No image URLs provided.")
     try:
         result = clip_model_service.similarity_search(req.query, req.image_urls)
-        key_manager.increment_usage(req.api_key, len(req.image_urls))
-        remaining = key_manager.remaining_requests(req.api_key)
-        return {**result, "remaining_requests": remaining}
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
