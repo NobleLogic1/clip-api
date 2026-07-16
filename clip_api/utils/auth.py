@@ -1,12 +1,12 @@
-from fastapi import Request, HTTPException
+from fastapi import Request, HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from ..services.key_manager import validate_api_key, check_and_increment_usage
 
 security = HTTPBearer()
 
 async def require_api_key(
-        request: Request,
-        credentials: HTTPAuthorizationCredentials = security.__call__,
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Security(security),
 ):
     api_key = credentials.credentials if credentials else None
     if not api_key:
