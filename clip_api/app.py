@@ -10,7 +10,7 @@ from .routes import encode, similarity, billing
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-        init_db()        # create SQLite tables
+    init_db()        # create SQLite tables
     load_model()     # warm up CLIP
     yield
 
