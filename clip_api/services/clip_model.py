@@ -26,12 +26,17 @@ class CLIPModelService:
         self._lock = threading.Lock()
 
     def load_model(self):
-        LOGGER.info(f"Loading CLIP model '{MODEL_ID}' on device '{self.device}'...")
-        self.model = CLIPModel.from_pretrained(MODEL_ID)
-        self.processor = CLIPProcessor.from_pretrained(MODEL_ID)
-        self.model.to(self.device)
-        self.model.eval()
-        LOGGER.info("CLIP model loaded successfully.")
+        try:
+            LOGGER.info(f"Loading CLIP model '{MODEL_ID}' on device '{self.device}'...")
+            self.model = CLIPModel.from_pretrained(MODEL_ID)
+            self.processor = CLIPProcessor.from_pretrained(MODEL_ID)
+            self.model.to(self.device)
+            self.model.eval()
+            LOGGER.info("CLIP model loaded successfully.")
+        except Exception as exc:
+            LOGGER.exception("CLIP model load failed: %s", exc)
+            self.model = None
+            self.processor = None
 
     @property
     def is_loaded(self) -> bool:
