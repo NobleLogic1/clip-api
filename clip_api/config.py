@@ -12,10 +12,21 @@ CLIP_MODEL_ID = os.environ.get("CLIP_MODEL_ID", "openai/clip-vit-base-patch32")
 MODEL_VARIANT = "clip-maintained-2026"
 
 # Stripe Configuration
+# Maps to Railway environment variables (can use either naming convention)
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
-STRIPE_PRICE_STARTER = os.environ.get("STRIPE_PRICE_STARTER", "")
-STRIPE_PRICE_PRO = os.environ.get("STRIPE_PRICE_PRO", "")
+
+# Price IDs: Accept either STARTER/PRO or DEVELOPER/PROFESSIONAL naming
+STRIPE_PRICE_STARTER = (
+    os.environ.get("STRIPE_PRICE_STARTER") or 
+    os.environ.get("STRIPE_PRICE_DEVELOPER") or 
+    ""
+)
+STRIPE_PRICE_PRO = (
+    os.environ.get("STRIPE_PRICE_PRO") or 
+    os.environ.get("STRIPE_PRICE_PROFESSIONAL") or 
+    ""
+)
 STRIPE_PRICE_ENTERPRISE = os.environ.get("STRIPE_PRICE_ENTERPRISE", "")
 
 # API Tier Limits (calls per month)
