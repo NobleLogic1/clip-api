@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List
 
 from ..services.clip_model import clip_model_service
 
@@ -8,12 +7,10 @@ router = APIRouter()
 
 
 class EncodeTextRequest(BaseModel):
-    api_key: str
-    texts: List[str]
+    text: str
 
 
 class EncodeImageRequest(BaseModel):
-    api_key: str
     image_url: str
 
 
@@ -21,11 +18,14 @@ class EncodeImageRequest(BaseModel):
 async def encode_text(req: EncodeTextRequest):
     if not clip_model_service.is_loaded:
         raise HTTPException(status_code=503, detail="Model not loaded")
-    if not req.texts:
-        raise HTTPException(status_code=400, detail="No text inputs provided.")
+    if not req.text:
+        raise HTTPException(status_code=400, detail="No text input provided.")
     try:
-        result = clip_model_service.encode_texts(req.texts)
-        return result
+        result = clip_model_service.encode_texts([req.text])
+        embedding = result["embeddings"][0]
+        return {"embedding": embedding, "dimensions": len(embedding)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -36,8 +36,11 @@ async def encode_image(req: EncodeImageRequest):
         raise HTTPException(status_code=503, detail="Model not loaded")
     try:
         result = clip_model_service.encode_image(req.image_url)
-        return result
+        embedding = result["embeddings"][0]
+        return {"embedding": embedding, "dimensions": len(embedding)}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

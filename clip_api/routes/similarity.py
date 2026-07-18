@@ -2,6 +2,7 @@ import logging
 from typing import List
 from urllib.parse import urlparse
 
+import numpy as np
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
@@ -9,6 +10,55 @@ from ..services.clip_model import clip_model_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["similarity"])
+
+
+class CompareEmbeddingsRequest(BaseModel):
+    """Validate two embedding vectors for pairwise similarity comparison."""
+    embedding_a: List[float] = Field(..., min_items=1, description="First embedding vector")
+    embedding_b: List[float] = Field(..., min_items=1, description="Second embedding vector")
+
+
+def _interpret_similarity(score: float) -> str:
+    if score < 0.2:
+        return "very low"
+    if score < 0.4:
+        return "low"
+    if score < 0.6:
+        return "moderate"
+    if score < 0.8:
+        return "high"
+    return "very high"
+
+
+@router.post("/similarity")
+async def compare_embeddings(req: CompareEmbeddingsRequest):
+    """Compare two embeddings and return a cosine similarity score with interpretation."""
+    if len(req.embedding_a) != len(req.embedding_b):
+        raise HTTPException(status_code=400, detail="Embeddings must have the same number of dimensions.")
+
+    try:
+        vec_a = np.array(req.embedding_a, dtype=float)
+        vec_b = np.array(req.embedding_b, dtype=float)
+
+        norm_a = np.linalg.norm(vec_a)
+        norm_b = np.linalg.norm(vec_b)
+        if norm_a == 0 or norm_b == 0:
+            raise ValueError("Embeddings must not be zero vectors")
+
+        similarity = float(np.dot(vec_a, vec_b) / (norm_a * norm_b))
+
+        return {
+            "similarity": similarity,
+            "interpretation": _interpret_similarity(similarity),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception(
+            "Similarity comparison failed",
+            extra={"event": "similarity.compare.failed", "context": {"error_type": type(exc).__name__}},
+        )
+        raise HTTPException(status_code=500, detail="Similarity comparison failed. Please try again.") from exc
 
 
 class SimilaritySearchRequest(BaseModel):
