@@ -1,238 +1,822 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NobleLogic CLIP API - Production Ready Embeddings</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>NobleLogic CLIP API Landing Page</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              bg: '#0a0a0a',
+              card: '#111111',
+              'card-alt': '#1a1a1a',
+              primary: '#6366f1',
+              'primary-dark': '#4f46e5',
+              'primary-light': '#818cf8',
+              secondary: '#22d3ee',
+              'secondary-dark': '#06b6d4',
+              fg: '#f4f4f5',
+              muted: '#71717a',
+              border: '#27272a',
+              success: '#22c55e',
+            },
+            fontFamily: {
+              display: ['Inter', 'system-ui', 'sans-serif'],
+              body: ['Inter', 'system-ui', 'sans-serif'],
+            },
+          },
+        },
+      };
+    </script>
+    <script src="https://unpkg.com/lucide@latest" defer></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #0a0a0a;
+        --card: #111111;
+        --card-alt: #1a1a1a;
+        --primary: #6366f1;
+        --primary-dark: #4f46e5;
+        --primary-light: #818cf8;
+        --secondary: #22d3ee;
+        --fg: #f4f4f5;
+        --muted: #71717a;
+        --border: #27272a;
+        --success: #22c55e;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      html { scroll-behavior: smooth; }
+
+      body {
+        font-family: 'Inter', system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        overflow-x: hidden;
+      }
+
+      /* Glassmorphism nav */
+      .glass-nav {
+        background: rgba(10, 10, 10, 0.7);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-bottom: 1px solid rgba(39, 39, 42, 0.5);
+      }
+
+      /* Gradient text */
+      .gradient-text {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+
+      /* Hero floating blobs */
+      .blob {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(120px);
+        opacity: 0.3;
+        animation: float 8s ease-in-out infinite;
+        pointer-events: none;
+      }
+      .blob-1 {
+        width: 500px; height: 500px;
+        background: var(--primary);
+        top: -100px; left: -100px;
+        animation-delay: 0s;
+      }
+      .blob-2 {
+        width: 400px; height: 400px;
+        background: var(--secondary);
+        top: 100px; right: -150px;
+        animation-delay: -3s;
+      }
+      .blob-3 {
+        width: 350px; height: 350px;
+        background: var(--primary-dark);
+        bottom: 0; left: 40%;
+        animation-delay: -5s;
+      }
+
+      @keyframes float {
+        0%, 100% { transform: translate(0, 0) scale(1); }
+        33% { transform: translate(30px, -30px) scale(1.05); }
+        66% { transform: translate(-20px, 20px) scale(0.95); }
+      }
+
+      /* Code block syntax highlighting */
+      .code-block {
+        background: #0d0d0d;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        overflow: hidden;
+        font-family: 'Courier New', monospace;
+        font-size: 0.85rem;
+        line-height: 1.7;
+      }
+      .code-block .code-header {
+        background: #161616;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .code-dot { width: 12px; height: 12px; border-radius: 50%; }
+      .code-dot-r { background: #ef4444; }
+      .code-dot-y { background: #eab308; }
+      .code-dot-g { background: var(--success); }
+      .code-body { padding: 20px; overflow-x: auto; }
+      .syn-method { color: var(--secondary); font-weight: 600; }
+      .syn-path { color: var(--fg); }
+      .syn-header { color: var(--muted); }
+      .syn-key { color: var(--primary-light); }
+      .syn-string { color: var(--success); }
+      .syn-number { color: #f59e0b; }
+      .syn-comment { color: var(--muted); font-style: italic; }
+      .syn-arrow { color: var(--secondary); font-weight: 700; }
+
+      /* Card hover */
+      .hover-card {
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+      }
+      .hover-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 0 40px rgba(99, 102, 241, 0.1);
+      }
+
+      /* Pricing highlight glow */
+      .pricing-glow {
+        box-shadow: 0 0 60px rgba(99, 102, 241, 0.15), 0 0 120px rgba(99, 102, 241, 0.05);
+        border-color: var(--primary) !important;
+      }
+
+      /* Tab active state */
+      .tab-btn-api { transition: all 0.2s ease; }
+      .tab-btn-api.active {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+      }
+
+      /* Tooltip */
+      .tooltip-container { position: relative; }
+      .tooltip-text {
+        visibility: hidden;
+        opacity: 0;
+        position: absolute;
+        bottom: calc(100% + 12px);
+        left: 50%;
+        transform: translateX(-50%);
+        background: #1e1e2e;
+        color: var(--fg);
+        padding: 8px 14px;
+        border-radius: 8px;
+        font-size: 0.8rem;
+        white-space: nowrap;
+        border: 1px solid var(--border);
+        transition: opacity 0.2s ease, visibility 0.2s ease;
+        z-index: 50;
+        pointer-events: none;
+      }
+      .tooltip-text::after {
+        content: '';
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        border-width: 6px;
+        border-style: solid;
+        border-color: #1e1e2e transparent transparent transparent;
+      }
+      .tooltip-container:hover .tooltip-text {
+        visibility: visible;
+        opacity: 1;
+      }
+
+      /* Section fade-in */
+      .fade-section {
+        opacity: 0;
+        transform: translateY(30px);
+        transition: opacity 0.7s ease, transform 0.7s ease;
+      }
+      .fade-section.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      /* Pill badge */
+      .hero-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 20px;
+        border-radius: 9999px;
+        border: 1px solid var(--primary);
+        background: rgba(99, 102, 241, 0.08);
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: var(--primary-light);
+      }
+
+      /* Contact pill links */
+      .contact-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 24px;
+        border-radius: 9999px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        text-decoration: none;
+        transition: all 0.3s ease;
+      }
+      .contact-pill-investors {
+        border: 1px solid var(--primary);
+        color: var(--primary-light);
+        background: rgba(99, 102, 241, 0.06);
+      }
+      .contact-pill-investors:hover {
+        background: rgba(99, 102, 241, 0.15);
+        box-shadow: 0 0 24px rgba(99, 102, 241, 0.25), 0 0 48px rgba(99, 102, 241, 0.1);
+      }
+      .contact-pill-press {
+        border: 1px solid var(--secondary);
+        color: var(--secondary);
+        background: rgba(34, 211, 238, 0.06);
+      }
+      .contact-pill-press:hover {
+        background: rgba(34, 211, 238, 0.15);
+        box-shadow: 0 0 24px rgba(34, 211, 238, 0.25), 0 0 48px rgba(34, 211, 238, 0.1);
+      }
+
+      /* Scrollbar */
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: var(--bg); }
+      ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+      @media (max-width: 767px) {
+        .blob { opacity: 0.15; }
+        .blob-1 { width: 250px; height: 250px; }
+        .blob-2 { width: 200px; height: 200px; }
+        .blob-3 { width: 180px; height: 180px; }
+      }
+    </style>
 </head>
-<body class="bg-slate-950 text-slate-50">
-    <!-- Navigation -->
-    <nav class="fixed top-0 w-full z-50 bg-slate-900/95 border-b border-slate-800">
-        <div class="max-w-7xl mx-auto flex items-center justify-between px-6 h-16">
-            <a href="#" class="font-bold text-lg">NobleLogic CLIP API</a>
-            <div class="hidden md:flex gap-8 items-center">
-                <a href="#features" class="text-sm text-slate-400 hover:text-indigo-400 transition">Features</a>
-                <a href="#use-cases" class="text-sm text-slate-400 hover:text-indigo-400 transition">Use Cases</a>
-                <a href="#pricing" class="text-sm text-slate-400 hover:text-indigo-400 transition">Pricing</a>
-            </div>
-            <a href="#pricing" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded text-sm font-semibold transition">Get Started</a>
+<body data-id="0" class="bg-bg text-fg">
+    <app-icon data-id="1" hidden data-icon="cpu" data-palette="Dark"></app-icon>
+
+    <!-- ===== STICKY NAV ===== -->
+    <header data-id="2" id="navbar-h3k2" class="glass-nav fixed top-0 left-0 right-0 z-50">
+      <div data-id="3" class="max-w-7xl mx-auto flex items-center justify-between px-4 md:px-6 h-16">
+        <!-- Logo -->
+        <a data-id="4" href="#" class="flex items-center gap-2 shrink-0">
+          <span data-id="5" class="text-white font-bold text-lg tracking-tight">NobleLogic</span>
+          <span data-id="6" class="text-xs font-medium text-primary-light bg-primary/10 border border-primary/30 rounded-full px-2 py-0.5 hidden sm:inline-block">CLIP Maintained API</span>
+        </a>
+        <!-- Desktop nav -->
+        <nav data-id="7" class="hidden md:flex items-center gap-8">
+          <a data-id="8" href="#features" class="text-sm text-muted hover:text-fg transition-colors">Features</a>
+          <a data-id="9" href="#use-cases" class="text-sm text-muted hover:text-fg transition-colors">Use Cases</a>
+          <a data-id="10" href="#pricing" class="text-sm text-muted hover:text-fg transition-colors">Pricing</a>
+          <a data-id="11" href="#api-docs" class="text-sm text-muted hover:text-fg transition-colors">Docs</a>
+        </nav>
+        <!-- Desktop CTA -->
+        <div data-id="12" class="hidden md:flex items-center gap-3">
+          <a data-id="13" href="#pricing" class="text-sm bg-primary hover:bg-primary-dark text-white rounded-lg px-4 py-2 transition-colors font-medium">Get API Key</a>
         </div>
+        <!-- Mobile hamburger -->
+        <button data-id="14" id="mobile-menu-btn-x9f1" class="md:hidden p-2 text-fg" aria-label="Open menu">
+          <i data-id="15" data-lucide="menu" class="w-6 h-6"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- Mobile menu overlay -->
+    <nav data-id="16" id="mobile-menu-k7m3" class="hidden fixed inset-0 bg-bg/95 backdrop-blur-xl z-[60] flex flex-col p-6">
+      <div data-id="17" class="flex items-center justify-between mb-10">
+        <span data-id="18" class="text-white font-bold text-lg">NobleLogic</span>
+        <button data-id="19" id="mobile-menu-close-p2r4" class="p-2 text-fg" aria-label="Close menu">
+          <i data-id="20" data-lucide="x" class="w-6 h-6"></i>
+        </button>
+      </div>
+      <div data-id="21" class="flex flex-col gap-6 text-lg">
+        <a data-id="22" href="#features" class="mobile-nav-link text-muted hover:text-fg transition-colors">Features</a>
+        <a data-id="23" href="#use-cases" class="mobile-nav-link text-muted hover:text-fg transition-colors">Use Cases</a>
+        <a data-id="24" href="#pricing" class="mobile-nav-link text-muted hover:text-fg transition-colors">Pricing</a>
+        <a data-id="25" href="#api-docs" class="mobile-nav-link text-muted hover:text-fg transition-colors">Docs</a>
+        <hr data-id="26" class="border-border" />
+        <a data-id="27" href="#pricing" class="mobile-nav-link bg-primary text-white rounded-lg px-4 py-3 text-center font-medium">Get API Key</a>
+      </div>
     </nav>
 
-    <main>
-        <!-- Hero Section -->
-        <section class="pt-32 pb-20 px-6 text-center min-h-[100vh] flex items-center justify-center">
-            <div class="max-w-4xl mx-auto">
-                <div class="text-indigo-400 text-lg mb-6 font-semibold">🚀 The Only Actively Maintained CLIP API</div>
-                <h1 class="text-6xl md:text-7xl font-bold mb-6 leading-[1.1]">
-                    CLIP Embeddings.<br/>Production Ready.<br/>
-                    <span class="bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">Finally.</span>
-                </h1>
-                <p class="text-xl text-slate-400 mb-10 max-w-2xl mx-auto leading-relaxed">
-                    OpenAI's CLIP model — containerized, hosted, and actively maintained. Generate image and text embeddings via simple HTTP requests. No GPU. No setup. No broken dependencies.
-                </p>
-                <div class="flex flex-col sm:flex-row gap-4 justify-center mb-12">
-                    <a href="#pricing" class="inline-flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-lg font-semibold transition">
-                        Start Building →
-                    </a>
-                </div>
-                <div class="flex flex-wrap gap-4 justify-center mb-12">
-                    <a href="mailto:mark@noblelogicllc.com?subject=Investment%20Inquiry" class="px-4 py-2 rounded-full text-sm border border-slate-700 hover:border-slate-600 transition">
-                        📈 Investors
-                    </a>
-                    <a href="mailto:mark@noblelogicllc.com?subject=Press%20Inquiry" class="px-4 py-2 rounded-full text-sm border border-slate-700 hover:border-slate-600 transition">
-                        📰 Press
-                    </a>
-                </div>
-                <div class="bg-slate-800/50 border border-slate-700 rounded-lg p-6 max-w-2xl mx-auto text-left">
-                    <div class="text-xs text-slate-400 mb-3 font-mono">API Request Example</div>
-                    <div class="text-sm space-y-2 font-mono text-slate-300">
-                        <div><span class="text-red-400">POST</span> <span class="text-green-400">/embed/text</span></div>
-                        <div><span class="text-blue-400">Authorization:</span> <span class="text-orange-400">Bearer clip_your_key_here</span></div>
-                        <div><span class="text-blue-400">Content-Type:</span> <span class="text-orange-400">application/json</span></div>
-                        <div class="mt-2">{ <span class="text-cyan-400">"text"</span>: <span class="text-orange-400">"aerial photograph of a flooded field"</span> }</div>
-                    </div>
-                </div>
+    <main data-id="28">
+
+      <!-- ===== HERO SECTION ===== -->
+      <section data-id="29" id="hero-s8k2" class="relative min-h-screen flex flex-col items-center justify-center px-4 md:px-6 pt-24 pb-16 overflow-hidden">
+        <!-- Blobs -->
+        <div data-id="30" class="blob blob-1"></div>
+        <div data-id="31" class="blob blob-2"></div>
+        <div data-id="32" class="blob blob-3"></div>
+
+        <div data-id="33" class="relative z-10 max-w-4xl mx-auto text-center">
+          <!-- Badge -->
+          <div data-id="34" class="hero-badge mb-8">🚀 The Only Actively Maintained CLIP API</div>
+
+          <!-- Headline -->
+          <h1 data-id="35" class="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight leading-[1.1] mb-6">
+            CLIP Embeddings.<br data-id="36"/>
+            Production Ready.<br data-id="37"/>
+            <span data-id="38" class="gradient-text">Finally.</span>
+          </h1>
+
+          <!-- Subheadline -->
+          <p data-id="39" class="text-base sm:text-lg md:text-xl text-muted max-w-2xl mx-auto mb-10 leading-relaxed">
+            OpenAI's CLIP model — containerized, hosted, and actively maintained. Generate image and text embeddings via simple HTTP requests. No GPU. No setup. No broken dependencies.
+          </p>
+
+          <!-- CTAs -->
+          <div data-id="40" class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
+            <a data-id="41" href="#pricing" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-primary hover:bg-primary-dark text-white font-semibold rounded-xl px-8 py-3.5 transition-colors text-base">
+              Start Building <span data-id="42" class="ml-1">→</span>
+            </a>
+          </div>
+
+          <!-- Investors & Press pills -->
+          <div data-id="43" class="flex flex-wrap items-center justify-center gap-4 mb-12">
+            <a data-id="44" href="mailto:mark@noblelogicllc.com?subject=Investment%20Inquiry" class="contact-pill contact-pill-investors">
+              📈 Investors
+            </a>
+            <a data-id="45" href="mailto:mark@noblelogicllc.com?subject=Press%20Inquiry" class="contact-pill contact-pill-press">
+              📰 Press
+            </a>
+          </div>
+
+          <!-- Code snippet -->
+          <div data-id="46" class="code-block max-w-2xl mx-auto text-left">
+            <div data-id="47" class="code-header">
+              <span data-id="48" class="code-dot code-dot-r"></span>
+              <span data-id="49" class="code-dot code-dot-y"></span>
+              <span data-id="50" class="code-dot code-dot-g"></span>
+              <span data-id="51" class="text-xs text-muted ml-2 font-sans">API Request</span>
             </div>
-        </section>
-
-        <!-- Problem Section -->
-        <section id="features" class="py-20 px-6 border-t border-slate-800">
-            <div class="max-w-6xl mx-auto">
-                <h2 class="text-4xl font-bold text-center mb-14">The Problem Nobody Fixed</h2>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div class="bg-slate-800 border border-slate-700 p-8 rounded-lg">
-                        <div class="text-4xl mb-4">❌</div>
-                        <h3 class="text-xl font-semibold mb-3">Abandoned</h3>
-                        <p class="text-slate-400 text-sm leading-relaxed">OpenAI released CLIP in 2021 and walked away. Broken dependencies. No Docker. No API.</p>
-                    </div>
-                    <div class="bg-slate-800 border border-slate-700 p-8 rounded-lg">
-                        <div class="text-4xl mb-4">❌</div>
-                        <h3 class="text-xl font-semibold mb-3">Inaccessible</h3>
-                        <p class="text-slate-400 text-sm leading-relaxed">Running CLIP requires CUDA setup, GPU hardware, and weeks of debugging. Most teams give up.</p>
-                    </div>
-                    <div class="bg-slate-800 border border-slate-700 p-8 rounded-lg">
-                        <div class="text-4xl mb-4">❌</div>
-                        <h3 class="text-xl font-semibold mb-3">No Market Solution</h3>
-                        <p class="text-slate-400 text-sm leading-relaxed">No commercially available, actively maintained hosted CLIP API exists. Until now.</p>
-                    </div>
-                </div>
+            <div data-id="52" class="code-body text-sm">
+              <div data-id="53"><span data-id="54" class="syn-method">POST</span> <span data-id="55" class="syn-path">/embed/text</span></div>
+              <div data-id="56"><span data-id="57" class="syn-header">Authorization:</span> <span data-id="58" class="syn-string">Bearer clip_your_key_here</span></div>
+              <div data-id="59"><span data-id="60" class="syn-header">Content-Type:</span> <span data-id="61" class="syn-string">application/json</span></div>
+              <div data-id="62" class="mt-2">{ <span data-id="63" class="syn-key">"text"</span>: <span data-id="64" class="syn-string">"aerial photograph of a flooded field"</span> }</div>
+              <div data-id="65" class="mt-3"><span data-id="66" class="syn-arrow">→</span> <span data-id="67" class="syn-comment">Response:</span></div>
+              <div data-id="68">{ <span data-id="69" class="syn-key">"embedding"</span>: [<span data-id="70" class="syn-number">0.031</span>, <span data-id="71" class="syn-number">-0.184</span>, <span data-id="72" class="syn-number">0.092</span>, <span data-id="73" class="syn-comment">...</span>], <span data-id="74" class="syn-key">"dimensions"</span>: <span data-id="75" class="syn-number">512</span> }</div>
             </div>
-        </section>
+          </div>
+        </div>
+      </section>
 
-        <!-- Solution Section -->
-        <section class="py-20 px-6 border-t border-slate-800 bg-slate-800/20">
-            <div class="max-w-6xl mx-auto">
-                <h2 class="text-4xl font-bold text-center mb-14">NobleLogic Fixed It</h2>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div class="bg-slate-800 border border-slate-700 p-8 rounded-lg text-center">
-                        <div class="text-5xl mb-4">🐳</div>
-                        <h3 class="text-lg font-semibold mb-2">Containerized</h3>
-                        <p class="text-slate-400 text-sm">Docker, zero setup, pull and run. Works everywhere containers work.</p>
-                    </div>
-                    <div class="bg-slate-800 border border-slate-700 p-8 rounded-lg text-center">
-                        <div class="text-5xl mb-4">🔑</div>
-                        <h3 class="text-lg font-semibold mb-2">API Key Auth</h3>
-                        <p class="text-slate-400 text-sm">Standard Bearer token authentication. Works with any HTTP client.</p>
-                    </div>
-                    <div class="bg-slate-800 border border-slate-700 p-8 rounded-lg text-center">
-                        <div class="text-5xl mb-4">⚡</div>
-                        <h3 class="text-lg font-semibold mb-2">Always On</h3>
-                        <p class="text-slate-400 text-sm">Cloud-hosted, uptime monitoring, production SLAs you can rely on.</p>
-                    </div>
-                </div>
+      <!-- ===== PROBLEM SECTION ===== -->
+      <section data-id="76" id="features" class="fade-section py-20 md:py-28 px-4 md:px-6">
+        <div data-id="77" class="max-w-6xl mx-auto">
+          <div data-id="78" class="text-center mb-14">
+            <h2 data-id="79" class="text-3xl md:text-4xl font-bold mb-4">The Problem Nobody Fixed</h2>
+            <p data-id="80" class="text-muted max-w-xl mx-auto">Developers have been struggling with CLIP for years. Here's why.</p>
+          </div>
+          <div data-id="81" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- Card 1 -->
+            <div data-id="82" class="hover-card bg-card border border-border rounded-2xl p-8">
+              <div data-id="83" class="text-3xl mb-4">❌</div>
+              <h3 data-id="84" class="text-xl font-semibold mb-3 text-fg">Abandoned</h3>
+              <p data-id="85" class="text-muted text-sm leading-relaxed">OpenAI released CLIP in 2021 and walked away. Broken dependencies. No Docker. No API.</p>
             </div>
-        </section>
-
-        <!-- Use Cases Section -->
-        <section id="use-cases" class="py-20 px-6 border-t border-slate-800">
-            <div class="max-w-6xl mx-auto">
-                <h2 class="text-4xl font-bold text-center mb-14">What You Can Build</h2>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div class="bg-slate-800 border border-slate-700 p-6 rounded-lg">
-                        <div class="text-3xl mb-3">🔍</div>
-                        <h3 class="font-semibold mb-2">Semantic Image Search</h3>
-                        <p class="text-slate-400 text-sm">Search image libraries with natural language. No tagging required.</p>
-                    </div>
-                    <div class="bg-slate-800 border border-slate-700 p-6 rounded-lg">
-                        <div class="text-3xl mb-3">🛸</div>
-                        <h3 class="font-semibold mb-2">Drone & Aerial Analysis</h3>
-                        <p class="text-slate-400 text-sm">Describe terrain in plain English, find it in drone imagery at scale.</p>
-                    </div>
-                    <div class="bg-slate-800 border border-slate-700 p-6 rounded-lg">
-                        <div class="text-3xl mb-3">🛡️</div>
-                        <h3 class="font-semibold mb-2">Content Moderation</h3>
-                        <p class="text-slate-400 text-sm">Flag images matching harmful descriptions automatically.</p>
-                    </div>
-                    <div class="bg-slate-800 border border-slate-700 p-6 rounded-lg">
-                        <div class="text-3xl mb-3">🛒</div>
-                        <h3 class="font-semibold mb-2">Visual Commerce</h3>
-                        <p class="text-slate-400 text-sm">"Find products that look like this" — image-to-product matching.</p>
-                    </div>
-                    <div class="bg-slate-800 border border-slate-700 p-6 rounded-lg">
-                        <div class="text-3xl mb-3">🏥</div>
-                        <h3 class="font-semibold mb-2">Medical Imaging</h3>
-                        <p class="text-slate-400 text-sm">Similarity matching across medical image archives.</p>
-                    </div>
-                    <div class="bg-slate-800 border border-slate-700 p-6 rounded-lg">
-                        <div class="text-3xl mb-3">🤖</div>
-                        <h3 class="font-semibold mb-2">AI Pipeline Input</h3>
-                        <p class="text-slate-400 text-sm">Feed embeddings into vector databases like Pinecone, Weaviate, pgvector.</p>
-                    </div>
-                </div>
+            <!-- Card 2 -->
+            <div data-id="86" class="hover-card bg-card border border-border rounded-2xl p-8">
+              <div data-id="87" class="text-3xl mb-4">❌</div>
+              <h3 data-id="88" class="text-xl font-semibold mb-3 text-fg">Inaccessible</h3>
+              <p data-id="89" class="text-muted text-sm leading-relaxed">Running CLIP requires CUDA setup, GPU hardware, and weeks of debugging. Most teams give up.</p>
             </div>
-        </section>
-
-        <!-- Pricing Section -->
-        <section id="pricing" class="py-20 px-6 border-t border-slate-800 bg-slate-800/20">
-            <div class="max-w-6xl mx-auto">
-                <h2 class="text-4xl font-bold text-center mb-14">Simple, Transparent Pricing</h2>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
-                    <!-- Developer -->
-                    <div class="bg-slate-800 border border-slate-700 p-8 rounded-lg flex flex-col">
-                        <h3 class="text-sm font-semibold uppercase tracking-widest text-slate-400 mb-4">Developer</h3>
-                        <div class="mb-1">
-                            <span class="text-4xl font-bold">$29</span>
-                            <span class="text-slate-400 text-sm">/month</span>
-                        </div>
-                        <p class="text-xs text-slate-400 mb-6">500,000 API calls/month</p>
-                        <ul class="flex-1 space-y-3 mb-8 text-sm">
-                            <li>✓ Text & image embedding endpoints</li>
-                            <li>✓ Standard rate limits</li>
-                            <li>✓ Community support</li>
-                            <li>✓ API key authentication</li>
-                        </ul>
-                        <button class="w-full border border-slate-600 hover:border-slate-500 px-4 py-3 rounded-lg font-semibold transition">Get Started</button>
-                    </div>
-
-                    <!-- Professional -->
-                    <div class="bg-slate-800 border-2 border-indigo-600 p-8 rounded-lg flex flex-col relative">
-                        <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-xs font-bold px-4 py-1 rounded-full">Most Popular</div>
-                        <h3 class="text-sm font-semibold uppercase tracking-widest text-indigo-400 mb-4">Professional</h3>
-                        <div class="mb-1">
-                            <span class="text-4xl font-bold">$99</span>
-                            <span class="text-slate-400 text-sm">/month</span>
-                        </div>
-                        <p class="text-xs text-slate-400 mb-6">2,500,000 API calls/month</p>
-                        <ul class="flex-1 space-y-3 mb-8 text-sm">
-                            <li>✓ Everything in Developer</li>
-                            <li>✓ 99.5% uptime SLA</li>
-                            <li>✓ Priority queue</li>
-                            <li>✓ Email support</li>
-                            <li>✓ Usage dashboard</li>
-                        </ul>
-                        <button class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-lg font-semibold transition">Get Started</button>
-                    </div>
-
-                    <!-- Enterprise -->
-                    <div class="bg-slate-800 border border-slate-700 p-8 rounded-lg flex flex-col">
-                        <h3 class="text-sm font-semibold uppercase tracking-widest text-slate-400 mb-4">Enterprise</h3>
-                        <div class="mb-1">
-                            <span class="text-4xl font-bold">$299</span>
-                            <span class="text-slate-400 text-sm">/month</span>
-                        </div>
-                        <p class="text-xs text-slate-400 mb-6">10,000,000 API calls/month</p>
-                        <ul class="flex-1 space-y-3 mb-8 text-sm">
-                            <li>✓ Everything in Professional</li>
-                            <li>✓ 99.9% uptime SLA</li>
-                            <li>✓ Dedicated support</li>
-                            <li>✓ Custom integration help</li>
-                            <li>✓ Invoicing available</li>
-                        </ul>
-                        <button class="w-full border border-slate-600 hover:border-slate-500 px-4 py-3 rounded-lg font-semibold transition">Get Started</button>
-                    </div>
-                </div>
-
-                <div class="text-center mt-10">
-                    <div class="bg-slate-800 border border-slate-700 p-6 rounded-lg max-w-xl mx-auto">
-                        <p class="font-semibold mb-1">Custom / Volume Pricing</p>
-                        <p class="text-slate-400 text-sm mb-3">Processing millions of images? Contact us for custom pricing.</p>
-                        <a href="mailto:mark@noblelogicllc.com" class="text-indigo-400 hover:text-indigo-300 text-sm font-semibold">mark@noblelogicllc.com →</a>
-                    </div>
-                </div>
+            <!-- Card 3 -->
+            <div data-id="90" class="hover-card bg-card border border-border rounded-2xl p-8">
+              <div data-id="91" class="text-3xl mb-4">❌</div>
+              <h3 data-id="92" class="text-xl font-semibold mb-3 text-fg">No Market Solution</h3>
+              <p data-id="93" class="text-muted text-sm leading-relaxed">No commercially available, actively maintained hosted CLIP API exists. Until now.</p>
             </div>
-        </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== SOLUTION SECTION ===== -->
+      <section data-id="94" id="solution-v7n3" class="fade-section py-20 md:py-28 px-4 md:px-6">
+        <div data-id="95" class="max-w-6xl mx-auto">
+          <div data-id="96" class="text-center mb-14">
+            <h2 data-id="97" class="text-3xl md:text-4xl font-bold mb-4">NobleLogic Fixed It</h2>
+            <p data-id="98" class="text-muted max-w-2xl mx-auto text-base md:text-lg">We took OpenAI's foundational CLIP model and wrapped it in production-grade infrastructure — so you don't have to.</p>
+          </div>
+          <div data-id="99" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div data-id="100" class="hover-card bg-card-alt border border-border rounded-2xl p-8 text-center">
+              <div data-id="101" class="text-4xl mb-4">🐳</div>
+              <h3 data-id="102" class="text-lg font-semibold mb-2">Containerized</h3>
+              <p data-id="103" class="text-muted text-sm">Docker, zero setup, pull and run. Works everywhere containers work.</p>
+            </div>
+            <div data-id="104" class="hover-card bg-card-alt border border-border rounded-2xl p-8 text-center">
+              <div data-id="105" class="text-4xl mb-4">🔑</div>
+              <h3 data-id="106" class="text-lg font-semibold mb-2">API Key Auth</h3>
+              <p data-id="107" class="text-muted text-sm">Standard Bearer token authentication. Works with any HTTP client.</p>
+            </div>
+            <div data-id="108" class="hover-card bg-card-alt border border-border rounded-2xl p-8 text-center">
+              <div data-id="109" class="text-4xl mb-4">⚡</div>
+              <h3 data-id="110" class="text-lg font-semibold mb-2">Always On</h3>
+              <p data-id="111" class="text-muted text-sm">Cloud-hosted, uptime monitoring, production SLAs you can rely on.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== HOW IT WORKS ===== -->
+      <section data-id="112" id="how-it-works-j4k1" class="fade-section py-20 md:py-28 px-4 md:px-6 bg-card/50">
+        <div data-id="113" class="max-w-4xl mx-auto">
+          <div data-id="114" class="text-center mb-14">
+            <h2 data-id="115" class="text-3xl md:text-4xl font-bold mb-4">From Zero to Embeddings in Minutes</h2>
+          </div>
+          <div data-id="116" class="space-y-0">
+            <!-- Step 1 -->
+            <div data-id="117" class="relative flex gap-6 pb-12">
+              <div data-id="118" class="flex flex-col items-center shrink-0">
+                <div data-id="119" class="w-12 h-12 rounded-full bg-primary/15 border-2 border-primary flex items-center justify-center text-primary font-bold text-lg">1</div>
+                <div data-id="120" class="w-0.5 flex-1 bg-gradient-to-b from-primary to-secondary mt-2"></div>
+              </div>
+              <div data-id="121" class="pt-2">
+                <h3 data-id="122" class="text-lg font-semibold mb-1">Subscribe</h3>
+                <p data-id="123" class="text-muted text-sm">Choose your plan, receive your API key instantly.</p>
+              </div>
+            </div>
+            <!-- Step 2 -->
+            <div data-id="124" class="relative flex gap-6 pb-12">
+              <div data-id="125" class="flex flex-col items-center shrink-0">
+                <div data-id="126" class="w-12 h-12 rounded-full bg-primary/15 border-2 border-primary flex items-center justify-center text-primary font-bold text-lg">2</div>
+                <div data-id="127" class="w-0.5 flex-1 bg-gradient-to-b from-primary to-secondary mt-2"></div>
+              </div>
+              <div data-id="128" class="pt-2">
+                <h3 data-id="129" class="text-lg font-semibold mb-1">Authenticate</h3>
+                <p data-id="130" class="text-muted text-sm">Add your key to the Authorization header.</p>
+              </div>
+            </div>
+            <!-- Step 3 -->
+            <div data-id="131" class="relative flex gap-6 pb-12">
+              <div data-id="132" class="flex flex-col items-center shrink-0">
+                <div data-id="133" class="w-12 h-12 rounded-full bg-primary/15 border-2 border-primary flex items-center justify-center text-primary font-bold text-lg">3</div>
+                <div data-id="134" class="w-0.5 flex-1 bg-gradient-to-b from-primary to-secondary mt-2"></div>
+              </div>
+              <div data-id="135" class="pt-2">
+                <h3 data-id="136" class="text-lg font-semibold mb-1">Embed</h3>
+                <p data-id="137" class="text-muted text-sm">POST text or images, receive 512-dimensional embedding vectors.</p>
+              </div>
+            </div>
+            <!-- Step 4 -->
+            <div data-id="138" class="relative flex gap-6">
+              <div data-id="139" class="flex flex-col items-center shrink-0">
+                <div data-id="140" class="w-12 h-12 rounded-full bg-secondary/15 border-2 border-secondary flex items-center justify-center text-secondary font-bold text-lg">4</div>
+              </div>
+              <div data-id="141" class="pt-2">
+                <h3 data-id="142" class="text-lg font-semibold mb-1">Build</h3>
+                <p data-id="143" class="text-muted text-sm">Power semantic search, content moderation, visual AI, and more.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== CAPABILITIES / USE CASES ===== -->
+      <section data-id="144" id="use-cases" class="fade-section py-20 md:py-28 px-4 md:px-6">
+        <div data-id="145" class="max-w-6xl mx-auto">
+          <div data-id="146" class="text-center mb-14">
+            <h2 data-id="147" class="text-3xl md:text-4xl font-bold mb-4">What You Can Build</h2>
+            <p data-id="148" class="text-muted max-w-xl mx-auto">CLIP embeddings unlock powerful capabilities across industries.</p>
+          </div>
+          <div data-id="149" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div data-id="150" class="hover-card bg-card border border-border rounded-2xl p-7">
+              <div data-id="151" class="text-3xl mb-3">🔍</div>
+              <h3 data-id="152" class="text-lg font-semibold mb-2">Semantic Image Search</h3>
+              <p data-id="153" class="text-muted text-sm leading-relaxed">Search image libraries with natural language. No tagging required.</p>
+            </div>
+            <div data-id="154" class="hover-card bg-card border border-border rounded-2xl p-7">
+              <div data-id="155" class="text-3xl mb-3">🛸</div>
+              <h3 data-id="156" class="text-lg font-semibold mb-2">Drone &amp; Aerial Analysis</h3>
+              <p data-id="157" class="text-muted text-sm leading-relaxed">Describe terrain in plain English, find it in drone imagery at scale.</p>
+            </div>
+            <div data-id="158" class="hover-card bg-card border border-border rounded-2xl p-7">
+              <div data-id="159" class="text-3xl mb-3">🛡️</div>
+              <h3 data-id="160" class="text-lg font-semibold mb-2">Content Moderation</h3>
+              <p data-id="161" class="text-muted text-sm leading-relaxed">Flag images matching harmful descriptions automatically.</p>
+            </div>
+            <div data-id="162" class="hover-card bg-card border border-border rounded-2xl p-7">
+              <div data-id="163" class="text-3xl mb-3">🛒</div>
+              <h3 data-id="164" class="text-lg font-semibold mb-2">Visual Commerce</h3>
+              <p data-id="165" class="text-muted text-sm leading-relaxed">"Find products that look like this" — image-to-product matching.</p>
+            </div>
+            <div data-id="166" class="hover-card bg-card border border-border rounded-2xl p-7">
+              <div data-id="167" class="text-3xl mb-3">🏥</div>
+              <h3 data-id="168" class="text-lg font-semibold mb-2">Medical Imaging</h3>
+              <p data-id="169" class="text-muted text-sm leading-relaxed">Similarity matching across medical image archives.</p>
+            </div>
+            <div data-id="170" class="hover-card bg-card border border-border rounded-2xl p-7">
+              <div data-id="171" class="text-3xl mb-3">🤖</div>
+              <h3 data-id="172" class="text-lg font-semibold mb-2">AI Pipeline Input</h3>
+              <p data-id="173" class="text-muted text-sm leading-relaxed">Feed embeddings into vector databases like Pinecone, Weaviate, pgvector.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== API REFERENCE ===== -->
+      <section data-id="174" id="api-docs" class="fade-section py-20 md:py-28 px-4 md:px-6 bg-card/50">
+        <div data-id="175" class="max-w-4xl mx-auto">
+          <div data-id="176" class="text-center mb-14">
+            <h2 data-id="177" class="text-3xl md:text-4xl font-bold mb-4">Dead Simple API</h2>
+            <p data-id="178" class="text-muted max-w-xl mx-auto">Three endpoints. Standard HTTP. Any language.</p>
+          </div>
+
+          <!-- Tabs -->
+          <div data-id="179" class="flex flex-wrap gap-2 mb-6">
+            <button data-id="180" class="tab-btn-api active text-sm font-medium px-4 py-2 rounded-lg border border-border text-muted" data-api-tab="text-embed">Text Embedding</button>
+            <button data-id="181" class="tab-btn-api text-sm font-medium px-4 py-2 rounded-lg border border-border text-muted" data-api-tab="image-embed">Image Embedding</button>
+            <button data-id="182" class="tab-btn-api text-sm font-medium px-4 py-2 rounded-lg border border-border text-muted" data-api-tab="similarity">Similarity</button>
+          </div>
+
+          <!-- Tab panels -->
+          <div data-id="183" id="tab-text-embed-c4d1" class="api-tab-panel code-block">
+            <div data-id="184" class="code-header">
+              <span data-id="185" class="code-dot code-dot-r"></span><span data-id="186" class="code-dot code-dot-y"></span><span data-id="187" class="code-dot code-dot-g"></span>
+              <span data-id="188" class="text-xs text-muted ml-2 font-sans">Text Embedding</span>
+            </div>
+            <div data-id="189" class="code-body text-sm">
+              <div data-id="190"><span data-id="191" class="syn-method">POST</span> <span data-id="192" class="syn-path">/embed/text</span> <span data-id="193" class="syn-header">HTTP/1.1</span></div>
+              <div data-id="194"><span data-id="195" class="syn-header">Host:</span> <span data-id="196" class="syn-string">api.noblelogic.ai</span></div>
+              <div data-id="197"><span data-id="198" class="syn-header">Authorization:</span> <span data-id="199" class="syn-string">Bearer clip_your_key_here</span></div>
+              <div data-id="200"><span data-id="201" class="syn-header">Content-Type:</span> <span data-id="202" class="syn-string">application/json</span></div>
+              <div data-id="203" class="mt-3">{ <span data-id="204" class="syn-key">"text"</span>: <span data-id="205" class="syn-string">"golden retriever running on a beach"</span> }</div>
+            </div>
+          </div>
+
+          <div data-id="206" id="tab-image-embed-e5f2" class="api-tab-panel code-block hidden">
+            <div data-id="207" class="code-header">
+              <span data-id="208" class="code-dot code-dot-r"></span><span data-id="209" class="code-dot code-dot-y"></span><span data-id="210" class="code-dot code-dot-g"></span>
+              <span data-id="211" class="text-xs text-muted ml-2 font-sans">Image Embedding</span>
+            </div>
+            <div data-id="212" class="code-body text-sm">
+              <div data-id="213"><span data-id="214" class="syn-method">POST</span> <span data-id="215" class="syn-path">/embed/image</span> <span data-id="216" class="syn-header">HTTP/1.1</span></div>
+              <div data-id="217"><span data-id="218" class="syn-header">Host:</span> <span data-id="219" class="syn-string">api.noblelogic.ai</span></div>
+              <div data-id="220"><span data-id="221" class="syn-header">Authorization:</span> <span data-id="222" class="syn-string">Bearer clip_your_key_here</span></div>
+              <div data-id="223"><span data-id="224" class="syn-header">Content-Type:</span> <span data-id="225" class="syn-string">application/json</span></div>
+              <div data-id="226" class="mt-3">{ <span data-id="227" class="syn-key">"image_url"</span>: <span data-id="228" class="syn-string">"https://example.com/photo.jpg"</span> }</div>
+            </div>
+          </div>
+
+          <div data-id="229" id="tab-similarity-g6h3" class="api-tab-panel code-block hidden">
+            <div data-id="230" class="code-header">
+              <span data-id="231" class="code-dot code-dot-r"></span><span data-id="232" class="code-dot code-dot-y"></span><span data-id="233" class="code-dot code-dot-g"></span>
+              <span data-id="234" class="text-xs text-muted ml-2 font-sans">Similarity</span>
+            </div>
+            <div data-id="235" class="code-body text-sm">
+              <div data-id="236"><span data-id="237" class="syn-method">POST</span> <span data-id="238" class="syn-path">/similarity</span> <span data-id="239" class="syn-header">HTTP/1.1</span></div>
+              <div data-id="240"><span data-id="241" class="syn-header">Host:</span> <span data-id="242" class="syn-string">api.noblelogic.ai</span></div>
+              <div data-id="243"><span data-id="244" class="syn-header">Authorization:</span> <span data-id="245" class="syn-string">Bearer clip_your_key_here</span></div>
+              <div data-id="246"><span data-id="247" class="syn-header">Content-Type:</span> <span data-id="248" class="syn-string">application/json</span></div>
+              <div data-id="249" class="mt-3">{</div>
+              <div data-id="250">&nbsp;&nbsp;<span data-id="251" class="syn-key">"embedding_a"</span>: [<span data-id="252" class="syn-number">...</span>],</div>
+              <div data-id="253">&nbsp;&nbsp;<span data-id="254" class="syn-key">"embedding_b"</span>: [<span data-id="255" class="syn-number">...</span>]</div>
+              <div data-id="256">}</div>
+              <div data-id="257" class="mt-3"><span data-id="258" class="syn-arrow">→</span> { <span data-id="259" class="syn-key">"similarity"</span>: <span data-id="260" class="syn-number">0.847</span>, <span data-id="261" class="syn-key">"interpretation"</span>: <span data-id="262" class="syn-string">"high similarity"</span> }</div>
+            </div>
+          </div>
+
+          <!-- Spec badges -->
+          <div data-id="263" class="flex flex-wrap gap-3 mt-8 justify-center">
+            <span data-id="264" class="text-xs font-medium px-4 py-2 rounded-full bg-card-alt border border-border text-muted">512-dim vectors</span>
+            <span data-id="265" class="text-xs font-medium px-4 py-2 rounded-full bg-card-alt border border-border text-muted">JSON API</span>
+            <span data-id="266" class="text-xs font-medium px-4 py-2 rounded-full bg-card-alt border border-border text-muted">Bearer Auth</span>
+            <span data-id="267" class="text-xs font-medium px-4 py-2 rounded-full bg-card-alt border border-border text-muted">Any HTTP Client</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== PRICING SECTION ===== -->
+      <section data-id="268" id="pricing" class="fade-section py-20 md:py-28 px-4 md:px-6">
+        <div data-id="269" class="max-w-6xl mx-auto">
+          <div data-id="270" class="text-center mb-14">
+            <h2 data-id="271" class="text-3xl md:text-4xl font-bold mb-4">Simple, Transparent Pricing</h2>
+            <p data-id="272" class="text-muted max-w-xl mx-auto">Pay only for the hosted service you need.</p>
+          </div>
+
+          <div data-id="273" class="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+            <!-- Developer -->
+            <div data-id="274" class="hover-card bg-card border border-border rounded-2xl p-8 flex flex-col">
+              <h3 data-id="275" class="text-sm font-semibold uppercase tracking-wider text-muted mb-4">Developer</h3>
+              <div data-id="276" class="mb-1">
+                <span data-id="277" class="text-4xl font-extrabold text-fg">$29</span>
+                <span data-id="278" class="text-muted text-sm">/month</span>
+              </div>
+              <p data-id="279" class="text-xs text-muted mb-6">500,000 API calls/month</p>
+              <ul data-id="280" class="space-y-3 mb-8 flex-1">
+                <li data-id="281" class="flex items-start gap-2 text-sm text-muted"><i data-id="282" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> Text &amp; image embedding endpoints</li>
+                <li data-id="283" class="flex items-start gap-2 text-sm text-muted"><i data-id="284" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> Standard rate limits</li>
+                <li data-id="285" class="flex items-start gap-2 text-sm text-muted"><i data-id="286" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> Community support</li>
+                <li data-id="287" class="flex items-start gap-2 text-sm text-muted"><i data-id="288" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> API key authentication</li>
+              </ul>
+              <div data-id="289" class="tooltip-container">
+                <button data-id="290" class="pricing-cta w-full py-3 rounded-xl border border-border text-fg font-semibold hover:border-muted transition-colors text-sm">Get Started</button>
+                <span data-id="291" class="tooltip-text">Payment system launching soon — join the waitlist</span>
+              </div>
+            </div>
+
+            <!-- Professional (highlighted) -->
+            <div data-id="292" class="hover-card pricing-glow bg-card border-2 border-primary rounded-2xl p-8 flex flex-col relative">
+              <div data-id="293" class="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white text-xs font-bold px-4 py-1 rounded-full">Most Popular</div>
+              <h3 data-id="294" class="text-sm font-semibold uppercase tracking-wider text-primary-light mb-4">Professional</h3>
+              <div data-id="295" class="mb-1">
+                <span data-id="296" class="text-4xl font-extrabold text-fg">$99</span>
+                <span data-id="297" class="text-muted text-sm">/month</span>
+              </div>
+              <p data-id="298" class="text-xs text-muted mb-6">2,500,000 API calls/month</p>
+              <ul data-id="299" class="space-y-3 mb-8 flex-1">
+                <li data-id="300" class="flex items-start gap-2 text-sm text-muted"><i data-id="301" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> Everything in Developer</li>
+                <li data-id="302" class="flex items-start gap-2 text-sm text-muted"><i data-id="303" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> 99.5% uptime SLA</li>
+                <li data-id="304" class="flex items-start gap-2 text-sm text-muted"><i data-id="305" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> Priority queue</li>
+                <li data-id="306" class="flex items-start gap-2 text-sm text-muted"><i data-id="307" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> Email support</li>
+                <li data-id="308" class="flex items-start gap-2 text-sm text-muted"><i data-id="309" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> Usage dashboard</li>
+              </ul>
+              <div data-id="310" class="tooltip-container">
+                <button data-id="311" class="pricing-cta w-full py-3 rounded-xl bg-primary hover:bg-primary-dark text-white font-semibold transition-colors text-sm">Get Started</button>
+                <span data-id="312" class="tooltip-text">Payment system launching soon — join the waitlist</span>
+              </div>
+            </div>
+
+            <!-- Enterprise -->
+            <div data-id="313" class="hover-card bg-card border border-border rounded-2xl p-8 flex flex-col">
+              <h3 data-id="314" class="text-sm font-semibold uppercase tracking-wider text-muted mb-4">Enterprise</h3>
+              <div data-id="315" class="mb-1">
+                <span data-id="316" class="text-4xl font-extrabold text-fg">$299</span>
+                <span data-id="317" class="text-muted text-sm">/month</span>
+              </div>
+              <p data-id="318" class="text-xs text-muted mb-6">10,000,000 API calls/month</p>
+              <ul data-id="319" class="space-y-3 mb-8 flex-1">
+                <li data-id="320" class="flex items-start gap-2 text-sm text-muted"><i data-id="321" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> Everything in Professional</li>
+                <li data-id="322" class="flex items-start gap-2 text-sm text-muted"><i data-id="323" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> 99.9% uptime SLA</li>
+                <li data-id="324" class="flex items-start gap-2 text-sm text-muted"><i data-id="325" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> Dedicated support</li>
+                <li data-id="326" class="flex items-start gap-2 text-sm text-muted"><i data-id="327" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> Custom integration help</li>
+                <li data-id="328" class="flex items-start gap-2 text-sm text-muted"><i data-id="329" data-lucide="check" class="w-4 h-4 text-success shrink-0 mt-0.5"></i> Invoicing available</li>
+              </ul>
+              <div data-id="330" class="tooltip-container">
+                <button data-id="331" class="pricing-cta w-full py-3 rounded-xl border border-border text-fg font-semibold hover:border-muted transition-colors text-sm">Get Started</button>
+                <span data-id="332" class="tooltip-text">Payment system launching soon — join the waitlist</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Below pricing -->
+          <div data-id="333" class="text-center mt-10 space-y-4">
+            <div data-id="334" class="bg-card-alt border border-border rounded-2xl p-6 max-w-xl mx-auto">
+              <p data-id="335" class="text-sm font-semibold text-fg mb-1">Custom / Volume Pricing</p>
+              <p data-id="336" class="text-sm text-muted">Processing millions of images? Contact us for custom pricing.</p>
+              <a data-id="337" href="mailto:mark@noblelogicllc.com" class="inline-flex items-center gap-1 text-sm text-primary-light hover:text-primary mt-2 transition-colors">
+                mark@noblelogicllc.com <span data-id="338">→</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
     </main>
 
-    <!-- Footer -->
-    <footer class="border-t border-slate-800 py-12 px-6 text-center text-slate-500 text-sm">
-        <p class="mb-2">© 2026 NobleLogic LLC</p>
-        <p class="text-xs text-slate-600">CLIP model architecture is the intellectual property of OpenAI. The CLIP Maintained API service is proprietary to NobleLogic LLC.</p>
-        <p class="text-xs text-slate-600 mt-4">Made by Copilot</p>
+    <!-- ===== FOOTER ===== -->
+    <footer data-id="339" id="footer-r3s5" class="border-t border-border py-14 px-4 md:px-6">
+      <div data-id="340" class="max-w-6xl mx-auto">
+        <div data-id="341" class="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 mb-10">
+          <div data-id="342">
+            <div data-id="343" class="flex items-center gap-2 mb-2">
+              <span data-id="344" class="text-white font-bold text-lg">NobleLogic</span>
+              <span data-id="345" class="text-xs text-primary-light bg-primary/10 border border-primary/30 rounded-full px-2 py-0.5">CLIP API</span>
+            </div>
+            <p data-id="346" class="text-sm text-muted">NobleLogic LLC — Fort Pierce, FL</p>
+          </div>
+          <div data-id="347" class="flex flex-wrap items-center gap-6">
+            <a data-id="348" href="#api-docs" class="text-sm text-muted hover:text-fg transition-colors">Docs</a>
+            <a data-id="349" href="#pricing" class="text-sm text-muted hover:text-fg transition-colors">Pricing</a>
+            <a data-id="350" href="mailto:mark@noblelogicllc.com" class="text-sm text-muted hover:text-fg transition-colors">Contact</a>
+          </div>
+        </div>
+        <div data-id="351" class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pt-8 border-t border-border">
+          <p data-id="352" class="text-xs text-muted leading-relaxed max-w-2xl">
+            © 2026 NobleLogic LLC. CLIP model architecture is the intellectual property of OpenAI. NobleLogic claims no ownership of the underlying model. The CLIP Maintained API service and codebase are proprietary works of NobleLogic LLC.
+          </p>
+          <p data-id="353" class="text-xs text-muted whitespace-nowrap">Made by Copilot</p>
+        </div>
+      </div>
     </footer>
 
     <script>
-        document.querySelectorAll('a[href^="#"]').forEach(a => {
-            a.addEventListener('click', e => {
-                const target = document.querySelector(a.getAttribute('href'));
-                if (target) {
-                    e.preventDefault();
-                    target.scrollIntoView({ behavior: 'smooth' });
-                }
-            });
+      // === Icon initialization (progressive enhancement) ===
+      if (typeof lucide !== "undefined" && typeof lucide.createIcons === "function") {
+        lucide.createIcons();
+      }
+
+      // === Mobile menu toggle ===
+      const mobileMenuBtn = document.getElementById('mobile-menu-btn-x9f1');
+      const mobileMenuClose = document.getElementById('mobile-menu-close-p2r4');
+      const mobileMenu = document.getElementById('mobile-menu-k7m3');
+
+      if (mobileMenuBtn && mobileMenu) {
+        mobileMenuBtn.addEventListener('click', function() {
+          mobileMenu.classList.remove('hidden');
+          document.body.style.overflow = 'hidden';
         });
+      }
+      if (mobileMenuClose && mobileMenu) {
+        mobileMenuClose.addEventListener('click', function() {
+          mobileMenu.classList.add('hidden');
+          document.body.style.overflow = '';
+        });
+      }
+      // Close mobile menu on link click
+      document.querySelectorAll('.mobile-nav-link').forEach(function(link) {
+        link.addEventListener('click', function() {
+          if (mobileMenu) {
+            mobileMenu.classList.add('hidden');
+            document.body.style.overflow = '';
+          }
+        });
+      });
+
+      // === API Tabs ===
+      const tabMap = {
+        'text-embed': document.getElementById('tab-text-embed-c4d1'),
+        'image-embed': document.getElementById('tab-image-embed-e5f2'),
+        'similarity': document.getElementById('tab-similarity-g6h3'),
+      };
+
+      document.querySelectorAll('.tab-btn-api').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          // Deactivate all tabs
+          document.querySelectorAll('.tab-btn-api').forEach(function(b) {
+            b.classList.remove('active');
+          });
+          // Hide all panels
+          document.querySelectorAll('.api-tab-panel').forEach(function(p) {
+            p.classList.add('hidden');
+          });
+          // Activate clicked tab
+          btn.classList.add('active');
+          var key = btn.getAttribute('data-api-tab');
+          if (tabMap[key]) {
+            tabMap[key].classList.remove('hidden');
+          }
+        });
+      });
+
+      // === Fade-in sections on scroll ===
+      function checkFadeSections() {
+        document.querySelectorAll('.fade-section').forEach(function(section) {
+          var rect = section.getBoundingClientRect();
+          if (rect.top < window.innerHeight - 80) {
+            section.classList.add('visible');
+          }
+        });
+      }
+      window.addEventListener('scroll', checkFadeSections, { passive: true });
+      window.addEventListener('load', checkFadeSections);
+      checkFadeSections();
+
+      // === Smooth scroll for nav links (anchors) ===
+      document.querySelectorAll('a[href^="#"]').forEach(function(anchor) {
+        anchor.addEventListener('click', function(e) {
+          var targetId = this.getAttribute('href');
+          if (targetId === '#') return;
+          var targetEl = document.querySelector(targetId);
+          if (targetEl) {
+            e.preventDefault();
+            var offset = 80; // account for sticky nav
+            var top = targetEl.getBoundingClientRect().top + window.pageYOffset - offset;
+            window.scrollTo({ top: top, behavior: 'smooth' });
+          }
+        });
+      });
+
+      // === Navbar background on scroll ===
+      var navbar = document.getElementById('navbar-h3k2');
+      window.addEventListener('scroll', function() {
+        if (window.scrollY > 20) {
+          navbar.style.borderBottomColor = 'rgba(39,39,42,0.8)';
+        } else {
+          navbar.style.borderBottomColor = 'rgba(39,39,42,0.5)';
+        }
+      }, { passive: true });
     </script>
 </body>
 </html>
-
