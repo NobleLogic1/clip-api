@@ -104,8 +104,8 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 app.include_router(billing.router)
 
 # Gated routes
-app.include_router(encode.router, dependencies=[Depends(require_api_key)])
-app.include_router(similarity.router, dependencies=[Depends(require_api_key)])
+app.include_router(encode.router, prefix="/embed", dependencies=[Depends(require_api_key)])
+app.include_router(similarity.router, prefix="", dependencies=[Depends(require_api_key)])
 
 
 @app.get("/health")
