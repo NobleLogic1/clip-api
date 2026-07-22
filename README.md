@@ -4,7 +4,7 @@
 
 Generate image and text embeddings with a simple HTTP request. No CUDA setup. No model downloads. No infrastructure to maintain.
 
-[Get API Key](https://noblelogicllc.com/#pricing) · [Live Demo (coming soon)](#) · [Documentation](https://noblelogicllc.com/#api-docs)
+[Get API Key](https://noblelogicllc.com/#pricing) · [Public Reference & Examples](https://github.com/NobleLogic1/clip-api-public) · [Documentation](https://noblelogicllc.com/#api-docs)
 
 ---
 
@@ -106,6 +106,14 @@ All endpoints require `Authorization: Bearer YOUR_API_KEY`.
 
 ---
 
+## Public Reference Repository
+
+Looking for examples, API reference, or a clean reference implementation?
+
+→ **[clip-api-public](https://github.com/NobleLogic1/clip-api-public)**
+
+---
+
 ## Live Demo
 
 > Interactive demo coming soon on Hugging Face Spaces.
@@ -114,15 +122,10 @@ All endpoints require `Authorization: Bearer YOUR_API_KEY`.
 
 ---
 
-## Topics
-
-`clip` `multimodal` `image-search` `embeddings` `vector-search` `semantic-search` `computer-vision` `api`
-
----
-
 ## Support
 
 - Landing page & docs: [noblelogicllc.com](https://noblelogicllc.com)
+- Public examples: [github.com/NobleLogic1/clip-api-public](https://github.com/NobleLogic1/clip-api-public)
 - Email: mark@noblelogicllc.com
 
 ---
