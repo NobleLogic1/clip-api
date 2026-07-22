@@ -14,8 +14,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --user torch torchvision \
     --index-url https://download.pytorch.org/whl/cpu
 
-# Install remaining dependencies
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Install remaining dependencies + gunicorn for production server
+RUN pip install --no-cache-dir --user -r requirements.txt gunicorn
 
 # Runtime stage
 FROM python:3.11-slim
@@ -60,5 +60,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
     CMD curl -f http://localhost:${PORT:-7860}/health || exit 1
 
 # Production server (Gunicorn + Uvicorn workers)
-# Falls back to simple uvicorn if gunicorn not preferred
-CMD ["sh", "-c", "gunicorn clip_api.app:app --bind 0.0.0.0:${PORT:-7860} --workers ${WORKERS:-2} --worker-class uvicorn.workers.UvicornWorker --timeout 120 --access-logfile - --error-logfile - || python app.py"]
+CMD ["sh", "-c", "gunicorn clip_api.app:app --bind 0.0.0.0:${PORT:-7860} --workers ${WORKERS:-2} --worker-class uvicorn.workers.UvicornWorker --timeout 120 --access-logfile - --error-logfile -"]

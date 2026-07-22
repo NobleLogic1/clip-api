@@ -196,7 +196,7 @@ def create_customer(stripe_customer_id: str, email: str, tier: str, subscription
                     "customer_id": customer_id,
                     "stripe_customer_id": stripe_customer_id,
                     "tier": normalized_tier,
-                    "email": email,
+                    # Do not log email (PII)
                 },
             },
         )
