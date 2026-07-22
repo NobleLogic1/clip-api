@@ -35,6 +35,7 @@ def _get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(target, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 
@@ -151,12 +152,25 @@ def create_customer(stripe_customer_id: str, email: str, tier: str, subscription
             conn.execute(
                 """
                 UPDATE customers
-                SET stripe_subscription_id = ?, email = ?, tier = ?, status = 'active', created_at = ?
+                SET stripe_subscription_id = ?, email = ?, tier = ?, status = 'active'
                 WHERE id = ?
                 """,
-                (subscription_id, email or "unknown", normalized_tier, now, existing["id"]),
+                (subscription_id, email or "unknown", normalized_tier, existing["id"]),
             )
             customer_id = existing["id"]
+            # Re-use existing key if present, otherwise create new
+            existing_key = conn.execute(
+                "SELECT key FROM api_keys WHERE customer_id = ? AND revoked = 0 ORDER BY id DESC LIMIT 1",
+                (customer_id,),
+            ).fetchone()
+            if existing_key:
+                api_key = existing_key["key"]
+            else:
+                api_key = generate_api_key()
+                conn.execute(
+                    "INSERT INTO api_keys (key, customer_id, created_at, revoked) VALUES (?, ?, ?, 0)",
+                    (api_key, customer_id, now),
+                )
         else:
             cursor = conn.execute(
                 """
@@ -166,17 +180,25 @@ def create_customer(stripe_customer_id: str, email: str, tier: str, subscription
                 (stripe_customer_id, subscription_id, email or "unknown", normalized_tier, now),
             )
             customer_id = cursor.lastrowid
+            api_key = generate_api_key()
+            conn.execute(
+                "INSERT INTO api_keys (key, customer_id, created_at, revoked) VALUES (?, ?, ?, 0)",
+                (api_key, customer_id, now),
+            )
 
-        api_key = generate_api_key()
-        conn.execute(
-            "INSERT INTO api_keys (key, customer_id, created_at, revoked) VALUES (?, ?, ?, 0)",
-            (api_key, customer_id, now),
-        )
         if not _safe_commit(conn):
             raise RuntimeError("Failed to commit customer creation")
         logger.info(
             "Customer created or updated",
-            extra={"event": "customer.created", "context": {"customer_id": customer_id, "stripe_customer_id": stripe_customer_id, "tier": normalized_tier}},
+            extra={
+                "event": "customer.created",
+                "context": {
+                    "customer_id": customer_id,
+                    "stripe_customer_id": stripe_customer_id,
+                    "tier": normalized_tier,
+                    "email": email,
+                },
+            },
         )
         return customer_id, api_key
     except sqlite3.Error as exc:
@@ -192,7 +214,10 @@ def validate_api_key(token_value: str) -> Optional[dict]:
         logger.warning("Rejected missing API key")
         return None
     if not token_value.startswith("clip_") or len(token_value) < 20:
-        logger.warning("Rejected malformed API key", extra={"event": "auth.invalid_format", "context": {"reason": "malformed"}})
+        logger.warning(
+            "Rejected malformed API key",
+            extra={"event": "auth.invalid_format", "context": {"reason": "malformed"}},
+        )
         return None
 
     conn = None
@@ -209,13 +234,22 @@ def validate_api_key(token_value: str) -> Optional[dict]:
             (token_value,),
         ).fetchone()
         if not row:
-            logger.warning("API key not found", extra={"event": "auth.invalid_key", "context": {"reason": "missing"}})
+            logger.warning(
+                "API key not found",
+                extra={"event": "auth.invalid_key", "context": {"reason": "missing"}},
+            )
             return None
         if row["revoked"]:
-            logger.warning("Rejected revoked API key", extra={"event": "auth.revoked", "context": {"reason": "revoked"}})
+            logger.warning(
+                "Rejected revoked API key",
+                extra={"event": "auth.revoked", "context": {"reason": "revoked"}},
+            )
             return None
         if row["status"] != "active":
-            logger.warning("Rejected inactive customer for API key", extra={"event": "auth.inactive_customer", "context": {"status": row["status"]}})
+            logger.warning(
+                "Rejected inactive customer for API key",
+                extra={"event": "auth.inactive_customer", "context": {"status": row["status"]}},
+            )
             return None
         return {
             "key": row["key"],
@@ -233,11 +267,12 @@ def validate_api_key(token_value: str) -> Optional[dict]:
 
 
 def check_and_increment_usage(usage_key: str, tier: str) -> Tuple[bool, int, int]:
+    """Check monthly limit and increment usage. Returns (allowed, current_count, limit)."""
     month = datetime.now(timezone.utc).strftime("%Y-%m")
     normalized_tier = (tier or "developer").lower()
     limit = TIER_LIMITS.get(normalized_tier, 500_000)
 
-    if not token_value or not isinstance(token_value, str):
+    if not usage_key or not isinstance(usage_key, str):
         logger.warning("Usage increment skipped because API key is missing")
         return False, 0, limit
 
@@ -257,7 +292,15 @@ def check_and_increment_usage(usage_key: str, tier: str) -> Tuple[bool, int, int
         if current >= limit:
             logger.warning(
                 "Usage limit reached",
-                extra={"event": "usage.limit_reached", "context": {"tier": normalized_tier, "month": month, "current": current, "limit": limit}},
+                extra={
+                    "event": "usage.limit_reached",
+                    "context": {
+                        "tier": normalized_tier,
+                        "month": month,
+                        "current": current,
+                        "limit": limit,
+                    },
+                },
             )
             return False, current, limit
 
@@ -291,6 +334,13 @@ def update_customer_status(stripe_customer_id: str, status: str) -> bool:
         )
         if not _safe_commit(conn):
             return False
+        logger.info(
+            "Customer status updated",
+            extra={
+                "event": "customer.status_updated",
+                "context": {"stripe_customer_id": stripe_customer_id, "status": status},
+            },
+        )
         return True
     except sqlite3.Error as exc:
         logger.exception("Customer status update failed: %s", exc)
@@ -316,7 +366,7 @@ def get_usage_stats(token_value: str) -> dict:
         ).fetchone()
         usage = conn.execute(
             "SELECT call_count FROM usage WHERE api_key = ? AND month = ?",
-            (usage_key, month),
+            (token_value, month),
         ).fetchone()
         if not customer:
             return {}
