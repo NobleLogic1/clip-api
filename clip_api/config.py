@@ -12,11 +12,9 @@ CLIP_MODEL_ID = os.environ.get("CLIP_MODEL_ID", "openai/clip-vit-base-patch32")
 MODEL_VARIANT = "clip-maintained-2026"
 
 # Stripe Configuration
-# Maps to Railway environment variables (can use either naming convention)
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 
-# Price IDs: Accept either STARTER/PRO or DEVELOPER/PROFESSIONAL naming
 STRIPE_PRICE_STARTER = (
     os.environ.get("STRIPE_PRICE_STARTER") or
     os.environ.get("STRIPE_PRICE_DEVELOPER") or
@@ -47,6 +45,12 @@ LOG_BACKUP_COUNT = int(os.environ.get("LOG_BACKUP_COUNT", 3))
 RATE_LIMIT_REQUESTS_PER_MINUTE = int(os.environ.get("RATE_LIMIT_REQUESTS_PER_MINUTE", 60))
 RATE_LIMIT_ENABLED = os.environ.get("RATE_LIMIT_ENABLED", "true").lower() == "true"
 
+# Email (Resend) — required for free-key verification in production
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+EMAIL_FROM = os.environ.get("EMAIL_FROM", "NobleLogic CLIP API <noreply@noblelogicllc.com>")
+# If true and Resend is not configured, include verification_url in API response (dev only)
+EMAIL_DEV_MODE = os.environ.get("EMAIL_DEV_MODE", "false").lower() == "true"
+
 
 def validate_startup_config() -> dict:
     """Return startup diagnostics and any missing deployment settings."""
@@ -70,6 +74,7 @@ def validate_startup_config() -> dict:
         "stripe_configured": all(
             [STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_STARTER, STRIPE_PRICE_PRO, STRIPE_PRICE_ENTERPRISE]
         ),
+        "email_configured": bool(RESEND_API_KEY),
         "db_path": DB_PATH,
         "log_file_path": LOG_FILE_PATH,
     }
