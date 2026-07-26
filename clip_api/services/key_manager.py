@@ -2,12 +2,15 @@ import logging
 import os
 import secrets
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple
 
 from ..config import DB_PATH, TIER_LIMITS, VALID_TIERS
 
 logger = logging.getLogger(__name__)
+
+# Max NEW free keys that can be created from a single IP per rolling 24 hours
+FREE_KEY_IP_LIMIT = 3
 
 
 def _resolve_db_path() -> str:
@@ -64,7 +67,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 email TEXT,
                 tier TEXT NOT NULL DEFAULT 'developer',
                 status TEXT NOT NULL DEFAULT 'active',
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                signup_ip TEXT
             );
             CREATE TABLE IF NOT EXISTS api_keys (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,6 +108,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE customers ADD COLUMN status TEXT DEFAULT 'active'")
         if "created_at" not in columns["customers"]:
             conn.execute("ALTER TABLE customers ADD COLUMN created_at TEXT")
+        if "signup_ip" not in columns["customers"]:
+            conn.execute("ALTER TABLE customers ADD COLUMN signup_ip TEXT")
         if "revoked" not in columns["api_keys"]:
             conn.execute("ALTER TABLE api_keys ADD COLUMN revoked INTEGER DEFAULT 0")
         if "call_count" not in columns["usage"]:
@@ -129,24 +135,32 @@ def generate_api_key() -> str:
     return "clip_" + secrets.token_urlsafe(32)
 
 
-def create_free_key(email: str) -> Tuple[int, str]:
+def create_free_key(email: str, client_ip: Optional[str] = None) -> Tuple[int, str, dict]:
     """
-    Create a Free-tier API key with only an email (no Stripe required).
-    Uses a synthetic stripe_customer_id of the form free_<token>.
+    Create or return a Free-tier API key.
+
+    Anti-abuse rules:
+    1. One free key per email — always reuses the existing active free key.
+    2. Creating a *new* free key is rate-limited by IP (max FREE_KEY_IP_LIMIT per 24h).
+    3. Exhausted free keys are still returned (same key) so users cannot farm new quota.
+
+    Returns: (customer_id, api_key, meta) where meta includes usage info.
     """
     if not email or "@" not in email:
         raise ValueError("A valid email is required to create a free key")
 
     email = email.strip().lower()
-    synthetic_id = f"free_{secrets.token_urlsafe(16)}"
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    month = now.strftime("%Y-%m")
+    free_limit = TIER_LIMITS.get("free", 9_000)
 
     conn = None
     try:
         conn = _get_db()
         _ensure_schema(conn)
 
-        # Re-use existing free key for the same email if still active
+        # ── 1. Reuse existing free key for this email ──────────────────────────
         existing = conn.execute(
             """
             SELECT c.id, ak.key
@@ -159,24 +173,72 @@ def create_free_key(email: str) -> Tuple[int, str]:
         ).fetchone()
 
         if existing:
+            # Pull current usage so the response can show remaining quota
+            usage_row = conn.execute(
+                "SELECT call_count FROM usage WHERE api_key = ? AND month = ?",
+                (existing["key"], month),
+            ).fetchone()
+            used = usage_row["call_count"] if usage_row else 0
+            remaining = max(0, free_limit - used)
+
             logger.info(
                 "Returning existing free key for email",
-                extra={"event": "free_key.reuse", "context": {"email": email}},
+                extra={
+                    "event": "free_key.reuse",
+                    "context": {"email": email, "used": used, "remaining": remaining},
+                },
             )
-            return existing["id"], existing["key"]
+            return existing["id"], existing["key"], {
+                "reused": True,
+                "calls_used": used,
+                "calls_limit": free_limit,
+                "calls_remaining": remaining,
+            }
 
+        # ── 2. IP rate limit for *new* free key creation ───────────────────────
+        if client_ip:
+            cutoff = (now - timedelta(hours=24)).isoformat()
+            ip_count_row = conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM customers
+                WHERE tier = 'free'
+                  AND signup_ip = ?
+                  AND created_at >= ?
+                """,
+                (client_ip, cutoff),
+            ).fetchone()
+            ip_count = ip_count_row["cnt"] if ip_count_row else 0
+
+            if ip_count >= FREE_KEY_IP_LIMIT:
+                logger.warning(
+                    "Free key IP rate limit hit",
+                    extra={
+                        "event": "free_key.ip_limit",
+                        "context": {"ip": client_ip, "count": ip_count},
+                    },
+                )
+                raise ValueError(
+                    f"Too many free keys created from this network. "
+                    f"Limit is {FREE_KEY_IP_LIMIT} new free keys per 24 hours. "
+                    f"Upgrade to a paid plan for more capacity."
+                )
+
+        # ── 3. Create new free customer + key ─────────────────────────────────
+        synthetic_id = f"free_{secrets.token_urlsafe(16)}"
         cursor = conn.execute(
             """
-            INSERT INTO customers (stripe_customer_id, stripe_subscription_id, email, tier, status, created_at)
-            VALUES (?, NULL, ?, 'free', 'active', ?)
+            INSERT INTO customers
+                (stripe_customer_id, stripe_subscription_id, email, tier, status, created_at, signup_ip)
+            VALUES (?, NULL, ?, 'free', 'active', ?, ?)
             """,
-            (synthetic_id, email, now),
+            (synthetic_id, email, now_iso, client_ip),
         )
         customer_id = cursor.lastrowid
         api_key = generate_api_key()
         conn.execute(
             "INSERT INTO api_keys (key, customer_id, created_at, revoked) VALUES (?, ?, ?, 0)",
-            (api_key, customer_id, now),
+            (api_key, customer_id, now_iso),
         )
 
         if not _safe_commit(conn):
@@ -186,10 +248,15 @@ def create_free_key(email: str) -> Tuple[int, str]:
             "Free key created",
             extra={
                 "event": "free_key.created",
-                "context": {"customer_id": customer_id, "email": email},
+                "context": {"customer_id": customer_id, "email": email, "ip": client_ip},
             },
         )
-        return customer_id, api_key
+        return customer_id, api_key, {
+            "reused": False,
+            "calls_used": 0,
+            "calls_limit": free_limit,
+            "calls_remaining": free_limit,
+        }
     except sqlite3.Error as exc:
         logger.exception("Free key creation failed: %s", exc)
         raise
@@ -227,7 +294,6 @@ def create_customer(stripe_customer_id: str, email: str, tier: str, subscription
                 (subscription_id, email or "unknown", normalized_tier, existing["id"]),
             )
             customer_id = existing["id"]
-            # Re-use existing key if present, otherwise create new
             existing_key = conn.execute(
                 "SELECT key FROM api_keys WHERE customer_id = ? AND revoked = 0 ORDER BY id DESC LIMIT 1",
                 (customer_id,),
