@@ -9,8 +9,8 @@ from ..config import DB_PATH, TIER_LIMITS, VALID_TIERS
 
 logger = logging.getLogger(__name__)
 
-# Max NEW free keys that can be created from a single IP per rolling 24 hours
 FREE_KEY_IP_LIMIT = 3
+VERIFY_TOKEN_TTL_HOURS = 1
 
 
 def _resolve_db_path() -> str:
@@ -24,10 +24,8 @@ def _resolve_db_path() -> str:
                 target = os.path.join("/tmp", os.path.basename(target))
         elif not os.access(directory, os.W_OK):
             target = os.path.join("/tmp", os.path.basename(target))
-
     if not target:
         target = os.path.join("/tmp", "clip_api.db")
-
     return target
 
 
@@ -56,7 +54,6 @@ def _safe_commit(conn: sqlite3.Connection) -> bool:
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create tables and add missing columns defensively."""
     try:
         conn.executescript(
             """
@@ -85,6 +82,15 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 call_count INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(api_key, month)
             );
+            CREATE TABLE IF NOT EXISTS email_verifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL,
+                token TEXT UNIQUE NOT NULL,
+                client_ip TEXT,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used INTEGER NOT NULL DEFAULT 0
+            );
             """
         )
         conn.commit()
@@ -93,8 +99,11 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         raise
 
     columns = {}
-    for table in ("customers", "api_keys", "usage"):
-        columns[table] = [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+    for table in ("customers", "api_keys", "usage", "email_verifications"):
+        try:
+            columns[table] = [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+        except sqlite3.Error:
+            columns[table] = []
     try:
         if "stripe_customer_id" not in columns["customers"]:
             conn.execute("ALTER TABLE customers ADD COLUMN stripe_customer_id TEXT")
@@ -135,17 +144,147 @@ def generate_api_key() -> str:
     return "clip_" + secrets.token_urlsafe(32)
 
 
+def get_existing_free_key(email: str) -> Optional[dict]:
+    """Return existing free key + usage for email, or None."""
+    email = email.strip().lower()
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    free_limit = TIER_LIMITS.get("free", 9_000)
+    conn = None
+    try:
+        conn = _get_db()
+        _ensure_schema(conn)
+        existing = conn.execute(
+            """
+            SELECT c.id, ak.key
+            FROM customers c
+            JOIN api_keys ak ON ak.customer_id = c.id
+            WHERE c.email = ? AND c.tier = 'free' AND c.status = 'active' AND ak.revoked = 0
+            ORDER BY c.id DESC LIMIT 1
+            """,
+            (email,),
+        ).fetchone()
+        if not existing:
+            return None
+        usage_row = conn.execute(
+            "SELECT call_count FROM usage WHERE api_key = ? AND month = ?",
+            (existing["key"], month),
+        ).fetchone()
+        used = usage_row["call_count"] if usage_row else 0
+        return {
+            "customer_id": existing["id"],
+            "api_key": existing["key"],
+            "calls_used": used,
+            "calls_limit": free_limit,
+            "calls_remaining": max(0, free_limit - used),
+        }
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def create_verification_token(email: str, client_ip: Optional[str] = None) -> str:
+    """
+    Create a one-time verification token for free-key signup.
+    Does NOT issue the API key yet — that happens on verify.
+    """
+    email = email.strip().lower()
+    if not email or "@" not in email:
+        raise ValueError("A valid email is required")
+
+    now = datetime.now(timezone.utc)
+    token = secrets.token_urlsafe(32)
+    expires = (now + timedelta(hours=VERIFY_TOKEN_TTL_HOURS)).isoformat()
+
+    conn = None
+    try:
+        conn = _get_db()
+        _ensure_schema(conn)
+
+        # IP rate limit on verification *requests* (not only completed keys)
+        if client_ip:
+            cutoff = (now - timedelta(hours=24)).isoformat()
+            ip_count_row = conn.execute(
+                """
+                SELECT COUNT(*) AS cnt FROM email_verifications
+                WHERE client_ip = ? AND created_at >= ?
+                """,
+                (client_ip, cutoff),
+            ).fetchone()
+            if ip_count_row and ip_count_row["cnt"] >= FREE_KEY_IP_LIMIT * 2:
+                raise ValueError(
+                    f"Too many free key requests from this network. "
+                    f"Please try again later or upgrade to a paid plan."
+                )
+
+        # Invalidate prior unused tokens for this email
+        conn.execute(
+            "UPDATE email_verifications SET used = 1 WHERE email = ? AND used = 0",
+            (email,),
+        )
+        conn.execute(
+            """
+            INSERT INTO email_verifications (email, token, client_ip, created_at, expires_at, used)
+            VALUES (?, ?, ?, ?, ?, 0)
+            """,
+            (email, token, client_ip, now.isoformat(), expires),
+        )
+        if not _safe_commit(conn):
+            raise RuntimeError("Failed to store verification token")
+        return token
+    except sqlite3.Error as exc:
+        logger.exception("Verification token creation failed: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def verify_and_create_free_key(token: str) -> Tuple[str, dict]:
+    """
+    Consume a verification token and issue (or reuse) a free API key.
+    Returns (api_key, meta).
+    """
+    if not token or len(token) < 16:
+        raise ValueError("Invalid verification token")
+
+    now = datetime.now(timezone.utc)
+    conn = None
+    try:
+        conn = _get_db()
+        _ensure_schema(conn)
+
+        row = conn.execute(
+            "SELECT * FROM email_verifications WHERE token = ?",
+            (token,),
+        ).fetchone()
+        if not row:
+            raise ValueError("Invalid or unknown verification link")
+        if row["used"]:
+            raise ValueError("This verification link has already been used")
+        if row["expires_at"] < now.isoformat():
+            raise ValueError("This verification link has expired. Please request a new free key.")
+
+        email = row["email"]
+        client_ip = row["client_ip"]
+
+        # Mark token used first (prevents double-click races)
+        conn.execute("UPDATE email_verifications SET used = 1 WHERE id = ?", (row["id"],))
+        if not _safe_commit(conn):
+            raise RuntimeError("Failed to mark verification token used")
+
+        # Issue key via existing create path
+        customer_id, api_key, meta = create_free_key(email, client_ip=client_ip)
+        return api_key, {**meta, "email": email}
+    except sqlite3.Error as exc:
+        logger.exception("Verify free key failed: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def create_free_key(email: str, client_ip: Optional[str] = None) -> Tuple[int, str, dict]:
-    """
-    Create or return a Free-tier API key.
-
-    Anti-abuse rules:
-    1. One free key per email — always reuses the existing active free key.
-    2. Creating a *new* free key is rate-limited by IP (max FREE_KEY_IP_LIMIT per 24h).
-    3. Exhausted free keys are still returned (same key) so users cannot farm new quota.
-
-    Returns: (customer_id, api_key, meta) where meta includes usage info.
-    """
+    """Create or return a Free-tier API key (called after email verification)."""
     if not email or "@" not in email:
         raise ValueError("A valid email is required to create a free key")
 
@@ -160,7 +299,6 @@ def create_free_key(email: str, client_ip: Optional[str] = None) -> Tuple[int, s
         conn = _get_db()
         _ensure_schema(conn)
 
-        # ── 1. Reuse existing free key for this email ──────────────────────────
         existing = conn.execute(
             """
             SELECT c.id, ak.key
@@ -173,21 +311,12 @@ def create_free_key(email: str, client_ip: Optional[str] = None) -> Tuple[int, s
         ).fetchone()
 
         if existing:
-            # Pull current usage so the response can show remaining quota
             usage_row = conn.execute(
                 "SELECT call_count FROM usage WHERE api_key = ? AND month = ?",
                 (existing["key"], month),
             ).fetchone()
             used = usage_row["call_count"] if usage_row else 0
             remaining = max(0, free_limit - used)
-
-            logger.info(
-                "Returning existing free key for email",
-                extra={
-                    "event": "free_key.reuse",
-                    "context": {"email": email, "used": used, "remaining": remaining},
-                },
-            )
             return existing["id"], existing["key"], {
                 "reused": True,
                 "calls_used": used,
@@ -195,36 +324,22 @@ def create_free_key(email: str, client_ip: Optional[str] = None) -> Tuple[int, s
                 "calls_remaining": remaining,
             }
 
-        # ── 2. IP rate limit for *new* free key creation ───────────────────────
         if client_ip:
             cutoff = (now - timedelta(hours=24)).isoformat()
             ip_count_row = conn.execute(
                 """
-                SELECT COUNT(*) AS cnt
-                FROM customers
-                WHERE tier = 'free'
-                  AND signup_ip = ?
-                  AND created_at >= ?
+                SELECT COUNT(*) AS cnt FROM customers
+                WHERE tier = 'free' AND signup_ip = ? AND created_at >= ?
                 """,
                 (client_ip, cutoff),
             ).fetchone()
-            ip_count = ip_count_row["cnt"] if ip_count_row else 0
-
-            if ip_count >= FREE_KEY_IP_LIMIT:
-                logger.warning(
-                    "Free key IP rate limit hit",
-                    extra={
-                        "event": "free_key.ip_limit",
-                        "context": {"ip": client_ip, "count": ip_count},
-                    },
-                )
+            if ip_count_row and ip_count_row["cnt"] >= FREE_KEY_IP_LIMIT:
                 raise ValueError(
                     f"Too many free keys created from this network. "
                     f"Limit is {FREE_KEY_IP_LIMIT} new free keys per 24 hours. "
                     f"Upgrade to a paid plan for more capacity."
                 )
 
-        # ── 3. Create new free customer + key ─────────────────────────────────
         synthetic_id = f"free_{secrets.token_urlsafe(16)}"
         cursor = conn.execute(
             """
@@ -240,16 +355,12 @@ def create_free_key(email: str, client_ip: Optional[str] = None) -> Tuple[int, s
             "INSERT INTO api_keys (key, customer_id, created_at, revoked) VALUES (?, ?, ?, 0)",
             (api_key, customer_id, now_iso),
         )
-
         if not _safe_commit(conn):
             raise RuntimeError("Failed to commit free key creation")
 
         logger.info(
             "Free key created",
-            extra={
-                "event": "free_key.created",
-                "context": {"customer_id": customer_id, "email": email, "ip": client_ip},
-            },
+            extra={"event": "free_key.created", "context": {"customer_id": customer_id, "email": email, "ip": client_ip}},
         )
         return customer_id, api_key, {
             "reused": False,
@@ -323,18 +434,6 @@ def create_customer(stripe_customer_id: str, email: str, tier: str, subscription
 
         if not _safe_commit(conn):
             raise RuntimeError("Failed to commit customer creation")
-        logger.info(
-            "Customer created or updated",
-            extra={
-                "event": "customer.created",
-                "context": {
-                    "customer_id": customer_id,
-                    "stripe_customer_id": stripe_customer_id,
-                    "tier": normalized_tier,
-                    "has_email": bool(email),
-                },
-            },
-        )
         return customer_id, api_key
     except sqlite3.Error as exc:
         logger.exception("Customer creation failed: %s", exc)
@@ -346,13 +445,8 @@ def create_customer(stripe_customer_id: str, email: str, tier: str, subscription
 
 def validate_api_key(token_value: str) -> Optional[dict]:
     if not token_value or not isinstance(token_value, str):
-        logger.warning("Rejected missing API key")
         return None
     if not token_value.startswith("clip_") or len(token_value) < 20:
-        logger.warning(
-            "Rejected malformed API key",
-            extra={"event": "auth.invalid_format", "context": {"reason": "malformed"}},
-        )
         return None
 
     conn = None
@@ -368,23 +462,7 @@ def validate_api_key(token_value: str) -> Optional[dict]:
             """,
             (token_value,),
         ).fetchone()
-        if not row:
-            logger.warning(
-                "API key not found",
-                extra={"event": "auth.invalid_key", "context": {"reason": "missing"}},
-            )
-            return None
-        if row["revoked"]:
-            logger.warning(
-                "Rejected revoked API key",
-                extra={"event": "auth.revoked", "context": {"reason": "revoked"}},
-            )
-            return None
-        if row["status"] != "active":
-            logger.warning(
-                "Rejected inactive customer for API key",
-                extra={"event": "auth.inactive_customer", "context": {"status": row["status"]}},
-            )
+        if not row or row["revoked"] or row["status"] != "active":
             return None
         return {
             "key": row["key"],
@@ -402,13 +480,11 @@ def validate_api_key(token_value: str) -> Optional[dict]:
 
 
 def check_and_increment_usage(usage_key: str, tier: str) -> Tuple[bool, int, int]:
-    """Check monthly limit and increment usage. Returns (allowed, current_count, limit)."""
     month = datetime.now(timezone.utc).strftime("%Y-%m")
     normalized_tier = (tier or "developer").lower()
     limit = TIER_LIMITS.get(normalized_tier, 500_000)
 
     if not usage_key or not isinstance(usage_key, str):
-        logger.warning("Usage increment skipped because API key is missing")
         return False, 0, limit
 
     conn = None
@@ -425,20 +501,7 @@ def check_and_increment_usage(usage_key: str, tier: str) -> Tuple[bool, int, int
         ).fetchone()
         current = row["call_count"] if row else 0
         if current >= limit:
-            logger.warning(
-                "Usage limit reached",
-                extra={
-                    "event": "usage.limit_reached",
-                    "context": {
-                        "tier": normalized_tier,
-                        "month": month,
-                        "current": current,
-                        "limit": limit,
-                    },
-                },
-            )
             return False, current, limit
-
         conn.execute(
             "UPDATE usage SET call_count = call_count + 1 WHERE api_key = ? AND month = ?",
             (usage_key, month),
@@ -456,9 +519,7 @@ def check_and_increment_usage(usage_key: str, tier: str) -> Tuple[bool, int, int
 
 def update_customer_status(stripe_customer_id: str, status: str) -> bool:
     if not stripe_customer_id:
-        logger.warning("Skipping customer status update because stripe_customer_id is missing")
         return False
-
     conn = None
     try:
         conn = _get_db()
@@ -467,16 +528,7 @@ def update_customer_status(stripe_customer_id: str, status: str) -> bool:
             "UPDATE customers SET status = ? WHERE stripe_customer_id = ?",
             (status, stripe_customer_id),
         )
-        if not _safe_commit(conn):
-            return False
-        logger.info(
-            "Customer status updated",
-            extra={
-                "event": "customer.status_updated",
-                "context": {"stripe_customer_id": stripe_customer_id, "status": status},
-            },
-        )
-        return True
+        return _safe_commit(conn)
     except sqlite3.Error as exc:
         logger.exception("Customer status update failed: %s", exc)
         return False
