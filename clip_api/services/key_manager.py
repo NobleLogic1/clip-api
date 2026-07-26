@@ -129,6 +129,75 @@ def generate_api_key() -> str:
     return "clip_" + secrets.token_urlsafe(32)
 
 
+def create_free_key(email: str) -> Tuple[int, str]:
+    """
+    Create a Free-tier API key with only an email (no Stripe required).
+    Uses a synthetic stripe_customer_id of the form free_<token>.
+    """
+    if not email or "@" not in email:
+        raise ValueError("A valid email is required to create a free key")
+
+    email = email.strip().lower()
+    synthetic_id = f"free_{secrets.token_urlsafe(16)}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    conn = None
+    try:
+        conn = _get_db()
+        _ensure_schema(conn)
+
+        # Re-use existing free key for the same email if still active
+        existing = conn.execute(
+            """
+            SELECT c.id, ak.key
+            FROM customers c
+            JOIN api_keys ak ON ak.customer_id = c.id
+            WHERE c.email = ? AND c.tier = 'free' AND c.status = 'active' AND ak.revoked = 0
+            ORDER BY c.id DESC LIMIT 1
+            """,
+            (email,),
+        ).fetchone()
+
+        if existing:
+            logger.info(
+                "Returning existing free key for email",
+                extra={"event": "free_key.reuse", "context": {"email": email}},
+            )
+            return existing["id"], existing["key"]
+
+        cursor = conn.execute(
+            """
+            INSERT INTO customers (stripe_customer_id, stripe_subscription_id, email, tier, status, created_at)
+            VALUES (?, NULL, ?, 'free', 'active', ?)
+            """,
+            (synthetic_id, email, now),
+        )
+        customer_id = cursor.lastrowid
+        api_key = generate_api_key()
+        conn.execute(
+            "INSERT INTO api_keys (key, customer_id, created_at, revoked) VALUES (?, ?, ?, 0)",
+            (api_key, customer_id, now),
+        )
+
+        if not _safe_commit(conn):
+            raise RuntimeError("Failed to commit free key creation")
+
+        logger.info(
+            "Free key created",
+            extra={
+                "event": "free_key.created",
+                "context": {"customer_id": customer_id, "email": email},
+            },
+        )
+        return customer_id, api_key
+    except sqlite3.Error as exc:
+        logger.exception("Free key creation failed: %s", exc)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def create_customer(stripe_customer_id: str, email: str, tier: str, subscription_id: str) -> Tuple[int, str]:
     if not stripe_customer_id:
         logger.warning("Skipping customer creation because stripe_customer_id is missing")
