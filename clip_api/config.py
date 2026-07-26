@@ -31,6 +31,7 @@ STRIPE_PRICE_ENTERPRISE = os.environ.get("STRIPE_PRICE_ENTERPRISE", "")
 
 # API Tier Limits (calls per month)
 TIER_LIMITS = {
+    "free": 9_000,              # ~300 requests/day — prototyping only
     "developer": 500_000,
     "professional": 2_500_000,
     "enterprise": 10_000_000,
@@ -72,4 +73,3 @@ def validate_startup_config() -> dict:
         "db_path": DB_PATH,
         "log_file_path": LOG_FILE_PATH,
     }
-
