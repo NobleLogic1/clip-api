@@ -3,10 +3,16 @@ from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, EmailStr
 
-from ..config import BASE_URL, STRIPE_WEBHOOK_SECRET, VALID_TIERS
-from ..services.key_manager import create_customer, get_usage_stats, update_customer_status, validate_api_key
+from ..config import BASE_URL, STRIPE_WEBHOOK_SECRET, TIER_LIMITS, VALID_TIERS
+from ..services.key_manager import (
+    create_customer,
+    create_free_key,
+    get_usage_stats,
+    update_customer_status,
+    validate_api_key,
+)
 from ..services.stripe_service import (
     construct_webhook_event,
     create_billing_portal_session,
@@ -24,16 +30,57 @@ class CheckoutRequest(BaseModel):
     model_config = ConfigDict(json_schema_extra={"examples": [{"tier": "professional", "email": "user@example.com"}]})
 
 
+class FreeKeyRequest(BaseModel):
+    email: str
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"email": "developer@example.com"}]})
+
+
 class PortalRequest(BaseModel):
     api_key: str
 
     model_config = ConfigDict(json_schema_extra={"examples": [{"api_key": "clip_..."}]})
 
 
+@router.post("/billing/free-key")
+async def create_free_api_key(body: FreeKeyRequest):
+    """
+    Create a Free-tier API key with only an email.
+    No credit card / Stripe required.
+    Limit: 9,000 calls per month (~300/day).
+    """
+    email = (body.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email is required")
+
+    try:
+        customer_id, api_key = create_free_key(email)
+        return {
+            "api_key": api_key,
+            "tier": "free",
+            "monthly_limit": TIER_LIMITS["free"],
+            "email": email,
+            "message": "Free key created. Perfect for prototyping. Upgrade when you are ready for production.",
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Free key creation failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to create free API key") from exc
+
+
 @router.post("/billing/checkout")
 async def create_checkout(body: CheckoutRequest):
-    """Create a Stripe checkout session for subscribing to a tier."""
+    """Create a Stripe checkout session for subscribing to a paid tier."""
     normalized_tier = (body.tier or "").lower()
+
+    # Free tier must use /billing/free-key
+    if normalized_tier == "free":
+        raise HTTPException(
+            status_code=400,
+            detail="Free tier does not require payment. Use POST /billing/free-key with your email instead.",
+        )
+
     if normalized_tier not in VALID_TIERS:
         raise HTTPException(status_code=400, detail=f"Invalid tier. Choose: {', '.join(VALID_TIERS)}")
 
@@ -63,8 +110,8 @@ async def billing_portal(body: PortalRequest):
 
     try:
         stripe_customer_id = customer.get("stripe_customer_id")
-        if not stripe_customer_id:
-            raise HTTPException(status_code=400, detail="No Stripe customer associated with this API key")
+        if not stripe_customer_id or str(stripe_customer_id).startswith("free_"):
+            raise HTTPException(status_code=400, detail="No Stripe customer associated with this API key (Free tier has no billing portal)")
 
         session = create_billing_portal_session(stripe_customer_id, BASE_URL)
         return {"portal_url": session.url}
