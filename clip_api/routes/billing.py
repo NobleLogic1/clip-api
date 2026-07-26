@@ -95,7 +95,6 @@ async def request_free_api_key(body: FreeKeyRequest, request: Request):
             "monthly_limit": existing["calls_limit"],
             "calls_used": existing["calls_used"],
             "calls_remaining": existing["calls_remaining"],
-            # Intentionally do NOT re-send the full key here after first issue
             "message": msg,
         }
 
@@ -118,7 +117,6 @@ async def request_free_api_key(body: FreeKeyRequest, request: Request):
         ),
     }
 
-    # Dev convenience only — never enable EMAIL_DEV_MODE in production
     if not sent and EMAIL_DEV_MODE:
         response["verification_url"] = verification_url(token)
         response["message"] += " (dev mode: verification_url included because RESEND_API_KEY is not set)"
@@ -187,7 +185,6 @@ async def verify_free_email(token: str):
           <p style="margin-top:24px"><a href="https://github.com/NobleLogic1/clip-api-public">View docs on GitHub →</a></p>
         </div>
         <script>
-          // Optional: copy on click
           document.getElementById('key').addEventListener('click', function() {{
             navigator.clipboard.writeText(this.textContent);
             this.style.outline = '1px solid #6366f1';
@@ -298,7 +295,7 @@ async def stripe_webhook(request: Request):
             update_customer_status(obj.get("customer"), "inactive")
         return JSONResponse({"status": "ok"})
     except Exception as exc:
-        logger.exception("Webhook event handler failed: %s", exp)
+        logger.exception("Webhook event handler failed: %s", exc)
         return JSONResponse({"status": "error"}, status_code=200)
 
 
