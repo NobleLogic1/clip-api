@@ -2,16 +2,26 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict
 
-from ..config import BASE_URL, STRIPE_WEBHOOK_SECRET, TIER_LIMITS, VALID_TIERS
+from ..config import (
+    BASE_URL,
+    EMAIL_DEV_MODE,
+    RESEND_API_KEY,
+    STRIPE_WEBHOOK_SECRET,
+    TIER_LIMITS,
+    VALID_TIERS,
+)
+from ..services.email_service import send_free_key_verification, verification_url
 from ..services.key_manager import (
     create_customer,
-    create_free_key,
+    create_verification_token,
+    get_existing_free_key,
     get_usage_stats,
     update_customer_status,
     validate_api_key,
+    verify_and_create_free_key,
 )
 from ..services.stripe_service import (
     construct_webhook_event,
@@ -43,7 +53,6 @@ class PortalRequest(BaseModel):
 
 
 def _client_ip(request: Request) -> Optional[str]:
-    """Best-effort client IP (Railway / proxies put real IP in X-Forwarded-For)."""
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
         return forwarded.split(",")[0].strip()
@@ -53,14 +62,12 @@ def _client_ip(request: Request) -> Optional[str]:
 
 
 @router.post("/billing/free-key")
-async def create_free_api_key(body: FreeKeyRequest, request: Request):
+async def request_free_api_key(body: FreeKeyRequest, request: Request):
     """
-    Create (or return) a Free-tier API key with only an email.
-    No credit card / Stripe required.
+    Start free-key signup. Requires email verification.
 
-    Anti-abuse:
-    - One free key per email (always reuses existing key, even if exhausted)
-    - Max 3 *new* free keys per IP per 24 hours
+    - If this email already has a free key → return status (no new key, no email).
+    - Otherwise → send magic link; key is only created after the user clicks it.
     """
     email = (body.email or "").strip().lower()
     if not email or "@" not in email:
@@ -68,42 +75,131 @@ async def create_free_api_key(body: FreeKeyRequest, request: Request):
 
     client_ip = _client_ip(request)
 
-    try:
-        customer_id, api_key, meta = create_free_key(email, client_ip=client_ip)
-
-        message = (
-            "Existing free key returned. Quota does not reset by requesting a new key."
-            if meta.get("reused")
-            else "Free key created. Perfect for prototyping. Upgrade when you are ready for production."
+    # Already has a free key — do not send another, do not issue a new one
+    existing = get_existing_free_key(email)
+    if existing:
+        msg = (
+            "You already have a free API key for this email. "
+            "Quota does not reset by requesting again."
         )
-
-        if meta.get("calls_remaining", 1) == 0:
-            message = (
+        if existing["calls_remaining"] == 0:
+            msg = (
                 "Your free quota for this month is exhausted. "
                 "Upgrade to Developer ($29/mo) to continue. "
-                "Creating a new free key will not increase your limit."
+                "A new free key will not increase your limit."
             )
-
         return {
-            "api_key": api_key,
+            "status": "already_exists",
             "tier": "free",
-            "monthly_limit": TIER_LIMITS["free"],
-            "calls_used": meta.get("calls_used", 0),
-            "calls_remaining": meta.get("calls_remaining", TIER_LIMITS["free"]),
-            "reused": meta.get("reused", False),
             "email": email,
-            "message": message,
+            "monthly_limit": existing["calls_limit"],
+            "calls_used": existing["calls_used"],
+            "calls_remaining": existing["calls_remaining"],
+            # Intentionally do NOT re-send the full key here after first issue
+            "message": msg,
         }
+
+    try:
+        token = create_verification_token(email, client_ip=client_ip)
     except ValueError as exc:
-        raise HTTPException(status_code=429 if "Too many free keys" in str(exc) else 400, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Free key creation failed: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to create free API key") from exc
+        raise HTTPException(
+            status_code=429 if "Too many" in str(exc) else 400,
+            detail=str(exc),
+        ) from exc
+
+    sent = send_free_key_verification(email, token)
+
+    response = {
+        "status": "verification_sent",
+        "email": email,
+        "message": (
+            "Check your email for a verification link. "
+            "Your free API key will be activated after you confirm."
+        ),
+    }
+
+    # Dev convenience only — never enable EMAIL_DEV_MODE in production
+    if not sent and EMAIL_DEV_MODE:
+        response["verification_url"] = verification_url(token)
+        response["message"] += " (dev mode: verification_url included because RESEND_API_KEY is not set)"
+    elif not sent and not RESEND_API_KEY:
+        logger.error("Free key requested but RESEND_API_KEY is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="Email delivery is not configured. Please contact support.",
+        )
+    elif not sent:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to send verification email. Please try again shortly.",
+        )
+
+    return response
+
+
+@router.get("/billing/verify-free", response_class=HTMLResponse)
+async def verify_free_email(token: str):
+    """Magic-link landing page — activates the free key and displays it once."""
+    try:
+        api_key, meta = verify_and_create_free_key(token)
+    except ValueError as exc:
+        return HTMLResponse(
+            content=f"""
+            <!DOCTYPE html>
+            <html><head><meta charset="utf-8"/><title>Verification failed</title>
+            <style>body{{font-family:system-ui;background:#0a0a0a;color:#f4f4f5;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
+            .card{{background:#111;border:1px solid #27272a;border-radius:16px;padding:32px;max-width:420px;text-align:center}}
+            a{{color:#818cf8}}</style></head>
+            <body><div class="card">
+              <h2>Verification failed</h2>
+              <p style="color:#a1a1aa">{exc}</p>
+              <p><a href="https://noblelogicllc.com">Return to site</a></p>
+            </div></body></html>
+            """,
+            status_code=400,
+        )
+
+    remaining = meta.get("calls_remaining", TIER_LIMITS["free"])
+    limit = meta.get("calls_limit", TIER_LIMITS["free"])
+
+    return HTMLResponse(
+        content=f"""
+        <!DOCTYPE html>
+        <html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+        <title>Your free CLIP API key</title>
+        <style>
+          body{{font-family:system-ui,-apple-system,sans-serif;background:#0a0a0a;color:#f4f4f5;
+               display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:16px}}
+          .card{{background:#111;border:1px solid #27272a;border-radius:16px;padding:32px;max-width:520px;width:100%}}
+          h1{{font-size:1.35rem;margin:0 0 8px}}
+          p{{color:#a1a1aa;line-height:1.55;margin:0 0 16px}}
+          code{{display:block;background:#0d0d0d;border:1px solid #27272a;border-radius:10px;
+                padding:14px 16px;word-break:break-all;font-size:0.85rem;color:#22c55e;margin:12px 0 8px}}
+          .hint{{font-size:0.8rem;color:#71717a}}
+          a{{color:#818cf8}}
+        </style></head>
+        <body><div class="card">
+          <h1>Free API key activated</h1>
+          <p>Copy this key now. For security it is only shown on this page.</p>
+          <code id="key">{api_key}</code>
+          <p class="hint">{limit:,} calls/month · {remaining:,} remaining this month</p>
+          <p class="hint">Use header: <strong>Authorization: Bearer {api_key}</strong></p>
+          <p style="margin-top:24px"><a href="https://github.com/NobleLogic1/clip-api-public">View docs on GitHub →</a></p>
+        </div>
+        <script>
+          // Optional: copy on click
+          document.getElementById('key').addEventListener('click', function() {{
+            navigator.clipboard.writeText(this.textContent);
+            this.style.outline = '1px solid #6366f1';
+          }});
+        </script>
+        </body></html>
+        """
+    )
 
 
 @router.post("/billing/checkout")
 async def create_checkout(body: CheckoutRequest):
-    """Create a Stripe checkout session for subscribing to a paid tier."""
     normalized_tier = (body.tier or "").lower()
 
     if normalized_tier == "free":
@@ -124,7 +220,6 @@ async def create_checkout(body: CheckoutRequest):
         )
         return {"checkout_url": session.url, "session_id": session.id}
     except ValueError as exc:
-        logger.warning("Checkout validation error", extra={"event": "billing.checkout.validation_failed", "context": {"tier": normalized_tier}})
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Checkout creation failed: %s", exc)
@@ -133,24 +228,21 @@ async def create_checkout(body: CheckoutRequest):
 
 @router.post("/billing/portal")
 async def billing_portal(body: PortalRequest):
-    """Get a Stripe billing portal URL for managing subscription."""
     customer = validate_api_key(body.api_key)
     if not customer:
-        logger.warning("Portal access denied for invalid API key", extra={"event": "billing.portal.auth_failed", "context": {"reason": "invalid_key"}})
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
 
     try:
         stripe_customer_id = customer.get("stripe_customer_id")
         if not stripe_customer_id or str(stripe_customer_id).startswith("free_"):
-            raise HTTPException(status_code=400, detail="No Stripe customer associated with this API key (Free tier has no billing portal)")
-
+            raise HTTPException(
+                status_code=400,
+                detail="No Stripe customer associated with this API key (Free tier has no billing portal)",
+            )
         session = create_billing_portal_session(stripe_customer_id, BASE_URL)
         return {"portal_url": session.url}
     except HTTPException:
         raise
-    except ValueError as exc:
-        logger.warning("Portal validation error", extra={"event": "billing.portal.validation_failed"})
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Billing portal creation failed: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to create billing portal") from exc
@@ -158,7 +250,6 @@ async def billing_portal(body: PortalRequest):
 
 @router.get("/billing/usage")
 async def get_usage(authorization: str = Header(...)):
-    """Get current API usage for the authenticated customer."""
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Use: Authorization: Bearer <api_key>")
 
@@ -169,27 +260,19 @@ async def get_usage(authorization: str = Header(...)):
     stats = get_usage_stats(api_key)
     if not stats:
         raise HTTPException(status_code=404, detail="Usage stats not found")
-
     return stats
 
 
 @router.post("/billing/webhook")
 async def stripe_webhook(request: Request):
-    """Stripe webhook endpoint for subscription events."""
     payload = await request.body()
     sig = request.headers.get("stripe-signature")
-
     if not sig:
-        logger.warning("Stripe webhook missing signature header")
         raise HTTPException(status_code=400, detail="Missing Stripe signature header")
 
     try:
         event = construct_webhook_event(payload, sig, STRIPE_WEBHOOK_SECRET)
-    except ValueError as exc:
-        logger.warning("Webhook validation error", extra={"event": "billing.webhook.validation_failed", "context": {"error": str(exc)}})
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Webhook processing failed: %s", exc)
         raise HTTPException(status_code=400, detail="Webhook verification failed") from exc
 
     event_type = event.get("type")
@@ -199,40 +282,24 @@ async def stripe_webhook(request: Request):
         if event_type == "checkout.session.completed":
             stripe_customer_id = obj.get("customer")
             if not stripe_customer_id:
-                logger.warning("Checkout session completed without Stripe customer ID", extra={"event": "billing.webhook.missing_customer", "context": {"event_type": event_type}})
                 return JSONResponse({"status": "ignored", "reason": "missing_customer_id"})
-            customer_id, api_key = create_customer(
+            create_customer(
                 stripe_customer_id=stripe_customer_id,
                 email=obj.get("customer_details", {}).get("email", "unknown"),
                 tier=obj.get("metadata", {}).get("tier", "developer"),
                 subscription_id=obj.get("subscription"),
             )
-            logger.info(
-                "New subscription",
-                extra={"event": "billing.webhook.subscription_created", "context": {"customer_id": customer_id, "stripe_customer_id": stripe_customer_id, "tier": obj.get("metadata", {}).get("tier", "developer")}},
-            )
-
         elif event_type in {"customer.subscription.deleted", "customer.subscription.paused"}:
             update_customer_status(obj.get("customer"), "inactive")
-            logger.info("Subscription marked inactive", extra={"event": "billing.webhook.subscription_inactive", "context": {"stripe_customer_id": obj.get("customer"), "event_type": event_type}})
-
         elif event_type == "customer.subscription.updated":
             status = obj.get("status")
-            new_status = "active" if status == "active" else "inactive"
-            update_customer_status(obj.get("customer"), new_status)
-            logger.info("Subscription status updated", extra={"event": "billing.webhook.subscription_updated", "context": {"stripe_customer_id": obj.get("customer"), "status": new_status}})
-
+            update_customer_status(obj.get("customer"), "active" if status == "active" else "inactive")
         elif event_type == "invoice.payment_failed":
             update_customer_status(obj.get("customer"), "inactive")
-            logger.warning("Payment failed", extra={"event": "billing.webhook.payment_failed", "context": {"stripe_customer_id": obj.get("customer")}})
-
-        else:
-            logger.info("Unhandled webhook event", extra={"event": "billing.webhook.unhandled", "context": {"event_type": event_type}})
-
         return JSONResponse({"status": "ok"})
     except Exception as exc:
-        logger.exception("Webhook event handler failed: %s", exc)
-        return JSONResponse({"status": "error", "error": "Webhook handler failed"}, status_code=200)
+        logger.exception("Webhook event handler failed: %s", exp)
+        return JSONResponse({"status": "error"}, status_code=200)
 
 
 @router.get("/billing/success")
@@ -240,11 +307,6 @@ async def checkout_success(session_id: Optional[str] = None):
     return {
         "status": "success",
         "message": "Subscription activated! Check your email for your API key.",
-        "next_steps": [
-            "Check your email for your API key",
-            "Use Authorization: Bearer <api_key> header to authenticate",
-            "Visit /billing/portal to manage your subscription",
-        ],
     }
 
 
@@ -253,8 +315,4 @@ async def checkout_cancel():
     return {
         "status": "cancelled",
         "message": "Checkout was cancelled. No charge was made.",
-        "next_steps": [
-            "Review the pricing and try again",
-            "Contact support if you have questions",
-        ],
     }
