@@ -106,6 +106,15 @@ All endpoints require `Authorization: Bearer YOUR_API_KEY`.
 
 ---
 
+
+## Runtime environment variables
+
+- `REDIS_URL` (optional): enables shared multi-worker rate limiting; without it, rate limiting is process-local in-memory only.
+- `IMAGE_DOWNLOAD_CONCURRENCY` (optional, default `10`): max concurrent external image downloads in `/search`.
+- `ENABLE_CUDA_CACHE_CLEAR` (optional, default `false`): if `true`, clears CUDA cache after embedding/search requests.
+
+---
+
 ## Public Reference Repository
 
 Looking for examples, API reference, or a clean reference implementation?

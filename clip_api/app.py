@@ -3,6 +3,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -10,7 +11,7 @@ from fastapi.responses import JSONResponse
 from .config import LOG_LEVEL, validate_startup_config
 from .routes import billing, encode, similarity
 from .services.clip_model import clip_model_service
-from .services.key_manager import init_db
+from .services.key_manager import close_db, init_db
 from .utils.auth import require_api_key
 from .utils.logging import setup_logging
 
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI):
         logger.exception("CLIP model load failed during startup: %s", exc)
 
     yield
+    close_db()
     logger.info("Application shutdown complete", extra={"event": "shutdown.complete"})
 
 
@@ -87,7 +89,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(
         status_code=422,
-        content={"error": {"code": "validation_error", "message": "Request validation failed", "details": exc.errors()}},
+        content={"error": {"code": "validation_error", "message": "Request validation failed", "details": jsonable_encoder(exc.errors())}},
     )
 
 

@@ -2,6 +2,8 @@ import logging
 import os
 import secrets
 import sqlite3
+import threading
+from functools import wraps
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple
 
@@ -11,6 +13,19 @@ logger = logging.getLogger(__name__)
 
 FREE_KEY_IP_LIMIT = 3
 VERIFY_TOKEN_TTL_HOURS = 1
+_DB_CONN: Optional[sqlite3.Connection] = None
+_DB_CONN_PATH: Optional[str] = None
+_DB_LOCK = threading.RLock()
+_SCHEMA_INITIALIZED = False
+
+
+def _with_db_lock(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        with _DB_LOCK:
+            return func(*args, **kwargs)
+
+    return wrapper
 
 
 def _resolve_db_path() -> str:
@@ -30,14 +45,39 @@ def _resolve_db_path() -> str:
 
 
 def _get_db() -> sqlite3.Connection:
+    global _DB_CONN, _DB_CONN_PATH, _SCHEMA_INITIALIZED
     target = _resolve_db_path()
     directory = os.path.dirname(target) or "."
     os.makedirs(directory, exist_ok=True)
-    conn = sqlite3.connect(target, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    with _DB_LOCK:
+        if _DB_CONN is not None and _DB_CONN_PATH == target:
+            return _DB_CONN
+        if _DB_CONN is not None:
+            try:
+                _DB_CONN.close()
+            except sqlite3.Error:
+                pass
+        conn = sqlite3.connect(target, timeout=30.0, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode=WAL")
+        _DB_CONN = conn
+        _DB_CONN_PATH = target
+        _SCHEMA_INITIALIZED = False
+        return conn
+
+
+def close_db() -> None:
+    global _DB_CONN, _DB_CONN_PATH, _SCHEMA_INITIALIZED
+    with _DB_LOCK:
+        if _DB_CONN is not None:
+            try:
+                _DB_CONN.close()
+            except sqlite3.Error:
+                pass
+        _DB_CONN = None
+        _DB_CONN_PATH = None
+        _SCHEMA_INITIALIZED = False
 
 
 def _safe_commit(conn: sqlite3.Connection) -> bool:
@@ -54,6 +94,17 @@ def _safe_commit(conn: sqlite3.Connection) -> bool:
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
+    global _SCHEMA_INITIALIZED
+    if _SCHEMA_INITIALIZED:
+        return
+    with _DB_LOCK:
+        if _SCHEMA_INITIALIZED:
+            return
+        _ensure_schema_locked(conn)
+        _SCHEMA_INITIALIZED = True
+
+
+def _ensure_schema_locked(conn: sqlite3.Connection) -> None:
     try:
         conn.executescript(
             """
@@ -128,22 +179,20 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         logger.warning("Schema migration skipped: %s", exc)
 
 
+@_with_db_lock
 def init_db() -> None:
-    conn = None
     try:
         conn = _get_db()
         _ensure_schema(conn)
     except sqlite3.Error as exc:
         logger.exception("Database initialization failed: %s", exc)
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 def generate_api_key() -> str:
     return "clip_" + secrets.token_urlsafe(32)
 
 
+@_with_db_lock
 def get_existing_free_key(email: str) -> Optional[dict]:
     """Return existing free key + usage for email, or None."""
     email = email.strip().lower()
@@ -177,11 +226,12 @@ def get_existing_free_key(email: str) -> Optional[dict]:
             "calls_limit": free_limit,
             "calls_remaining": max(0, free_limit - used),
         }
-    finally:
-        if conn is not None:
-            conn.close()
+    except sqlite3.Error as exc:
+        logger.exception("Existing free key lookup failed: %s", exc)
+        return None
 
 
+@_with_db_lock
 def create_verification_token(email: str, client_ip: Optional[str] = None) -> str:
     """
     Create a one-time verification token for free-key signup.
@@ -234,11 +284,9 @@ def create_verification_token(email: str, client_ip: Optional[str] = None) -> st
     except sqlite3.Error as exc:
         logger.exception("Verification token creation failed: %s", exc)
         raise
-    finally:
-        if conn is not None:
-            conn.close()
 
 
+@_with_db_lock
 def verify_and_create_free_key(token: str) -> Tuple[str, dict]:
     """
     Consume a verification token and issue (or reuse) a free API key.
@@ -278,11 +326,9 @@ def verify_and_create_free_key(token: str) -> Tuple[str, dict]:
     except sqlite3.Error as exc:
         logger.exception("Verify free key failed: %s", exc)
         raise
-    finally:
-        if conn is not None:
-            conn.close()
 
 
+@_with_db_lock
 def create_free_key(email: str, client_ip: Optional[str] = None) -> Tuple[int, str, dict]:
     """Create or return a Free-tier API key (called after email verification)."""
     if not email or "@" not in email:
@@ -371,11 +417,9 @@ def create_free_key(email: str, client_ip: Optional[str] = None) -> Tuple[int, s
     except sqlite3.Error as exc:
         logger.exception("Free key creation failed: %s", exc)
         raise
-    finally:
-        if conn is not None:
-            conn.close()
 
 
+@_with_db_lock
 def create_customer(stripe_customer_id: str, email: str, tier: str, subscription_id: str) -> Tuple[int, str]:
     if not stripe_customer_id:
         logger.warning("Skipping customer creation because stripe_customer_id is missing")
@@ -438,11 +482,9 @@ def create_customer(stripe_customer_id: str, email: str, tier: str, subscription
     except sqlite3.Error as exc:
         logger.exception("Customer creation failed: %s", exc)
         raise
-    finally:
-        if conn is not None:
-            conn.close()
 
 
+@_with_db_lock
 def validate_api_key(token_value: str) -> Optional[dict]:
     if not token_value or not isinstance(token_value, str):
         return None
@@ -474,11 +516,9 @@ def validate_api_key(token_value: str) -> Optional[dict]:
     except sqlite3.Error as exc:
         logger.exception("API key validation failed: %s", exc)
         return None
-    finally:
-        if conn is not None:
-            conn.close()
 
 
+@_with_db_lock
 def check_and_increment_usage(usage_key: str, tier: str) -> Tuple[bool, int, int]:
     month = datetime.now(timezone.utc).strftime("%Y-%m")
     normalized_tier = (tier or "developer").lower()
@@ -512,11 +552,9 @@ def check_and_increment_usage(usage_key: str, tier: str) -> Tuple[bool, int, int
     except sqlite3.Error as exc:
         logger.exception("Usage update failed: %s", exc)
         return False, 0, limit
-    finally:
-        if conn is not None:
-            conn.close()
 
 
+@_with_db_lock
 def update_customer_status(stripe_customer_id: str, status: str) -> bool:
     if not stripe_customer_id:
         return False
@@ -532,11 +570,9 @@ def update_customer_status(stripe_customer_id: str, status: str) -> bool:
     except sqlite3.Error as exc:
         logger.exception("Customer status update failed: %s", exc)
         return False
-    finally:
-        if conn is not None:
-            conn.close()
 
 
+@_with_db_lock
 def get_usage_stats(token_value: str) -> dict:
     month = datetime.now(timezone.utc).strftime("%Y-%m")
     conn = None
@@ -570,6 +606,3 @@ def get_usage_stats(token_value: str) -> dict:
     except sqlite3.Error as exc:
         logger.exception("Usage stats lookup failed: %s", exc)
         return {}
-    finally:
-        if conn is not None:
-            conn.close()
