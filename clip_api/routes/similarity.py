@@ -151,7 +151,7 @@ async def similarity_search(req: SimilaritySearchRequest):
 
     try:
         # Call CLIP model service with validated inputs
-        result = clip_model_service.similarity_search(req.query, req.image_urls)
+        result = await clip_model_service.similarity_search(req.query, req.image_urls)
 
         logger.info(
             "Similarity search completed",

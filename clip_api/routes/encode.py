@@ -21,7 +21,7 @@ async def encode_text(req: EncodeTextRequest):
     if not req.text:
         raise HTTPException(status_code=400, detail="No text input provided.")
     try:
-        result = clip_model_service.encode_texts([req.text])
+        result = await clip_model_service.encode_texts([req.text])
         embedding = result["embeddings"][0]
         return {"embedding": embedding, "dimensions": len(embedding)}
     except HTTPException:
@@ -35,7 +35,7 @@ async def encode_image(req: EncodeImageRequest):
     if not clip_model_service.is_loaded:
         raise HTTPException(status_code=503, detail="Model not loaded")
     try:
-        result = clip_model_service.encode_image(req.image_url)
+        result = await clip_model_service.encode_image(req.image_url)
         embedding = result["embeddings"][0]
         return {"embedding": embedding, "dimensions": len(embedding)}
     except ValueError as e:

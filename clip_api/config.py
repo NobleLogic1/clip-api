@@ -44,6 +44,7 @@ LOG_MAX_BYTES = int(os.environ.get("LOG_MAX_BYTES", 5_242_880))
 LOG_BACKUP_COUNT = int(os.environ.get("LOG_BACKUP_COUNT", 3))
 RATE_LIMIT_REQUESTS_PER_MINUTE = int(os.environ.get("RATE_LIMIT_REQUESTS_PER_MINUTE", 60))
 RATE_LIMIT_ENABLED = os.environ.get("RATE_LIMIT_ENABLED", "true").lower() == "true"
+REDIS_URL = os.environ.get("REDIS_URL", "").strip()
 
 # Email (Resend) — required for free-key verification in production
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
