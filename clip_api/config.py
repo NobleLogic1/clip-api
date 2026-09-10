@@ -1,4 +1,5 @@
 import os
+import re
 
 # Database
 DB_PATH = os.environ.get("CLIP_DB_PATH") or os.environ.get("DB_PATH") or "/data/clip_api.db"
@@ -46,9 +47,51 @@ RATE_LIMIT_REQUESTS_PER_MINUTE = int(os.environ.get("RATE_LIMIT_REQUESTS_PER_MIN
 RATE_LIMIT_ENABLED = os.environ.get("RATE_LIMIT_ENABLED", "true").lower() == "true"
 REDIS_URL = os.environ.get("REDIS_URL", "").strip()
 
+
+def _clean_env(value: str) -> str:
+    return (value or "").strip().strip('"').strip("'")
+
+
+def _sanitize_resend_key(raw: str) -> str:
+    key = _clean_env(raw)
+    if key.lower().startswith("resend_api_key="):
+        key = key.split("=", 1)[1].strip()
+    return key
+
+
+def _sanitize_email_from(raw: str) -> str:
+    """
+    Resend needs either 'email@domain' or 'Name <email@domain>'.
+    Railway values sometimes include a duplicated 'EMAIL_FROM=' prefix
+    or a display name without angle brackets.
+    """
+    value = _clean_env(raw)
+    while value.upper().startswith("EMAIL_FROM="):
+        value = value.split("=", 1)[1].strip()
+
+    default = "NobleLogic CLIP API <noreply@noblelogicllc.com>"
+    if not value:
+        return default
+
+    if "<" in value and ">" in value:
+        return value
+
+    match = re.search(r"([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})", value)
+    if not match:
+        return default
+
+    address = match.group(1)
+    name = value.replace(address, "").strip(" <>")
+    if name:
+        return f"{name} <{address}>"
+    return address
+
+
 # Email (Resend) — required for free-key verification in production
-RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
-EMAIL_FROM = os.environ.get("EMAIL_FROM", "NobleLogic CLIP API <noreply@noblelogicllc.com>")
+RESEND_API_KEY = _sanitize_resend_key(os.environ.get("RESEND_API_KEY", ""))
+EMAIL_FROM = _sanitize_email_from(
+    os.environ.get("EMAIL_FROM", "NobleLogic CLIP API <noreply@noblelogicllc.com>")
+)
 # If true and Resend is not configured, include verification_url in API response (dev only)
 EMAIL_DEV_MODE = os.environ.get("EMAIL_DEV_MODE", "false").lower() == "true"
 
